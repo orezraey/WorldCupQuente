@@ -12,6 +12,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from worldcupquente.formatters import (
     format_games,
+    format_live_games,
     format_team_roster,
     format_today_games,
     split_telegram_message,
@@ -42,6 +43,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "<b>Copa do Mundo 2026</b>\n\n"
         "Comandos disponíveis:\n"
         "/hoje - jogos de hoje\n"
+        "/aovivo - partidas ao vivo\n"
         "/calendario - calendário de jogos por data ou seleção\n"
         "/selecoes - lista de seleções e elencos"
     )
@@ -59,6 +61,21 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception:
         logger.exception("Failed to fetch today's games")
         text = "Não consegui buscar os jogos de hoje agora. Tente novamente em instantes."
+    for chunk in split_telegram_message(text):
+        await message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+
+async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    service = _get_service(context)
+    try:
+        events = await service.get_live_events(use_cache=False)
+        text = format_live_games(events, service.bot_timezone)
+    except Exception:
+        logger.exception("Failed to fetch live games")
+        text = "Não consegui buscar as partidas ao vivo agora. Tente novamente em instantes."
     for chunk in split_telegram_message(text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
@@ -117,6 +134,7 @@ def get_handlers() -> list[Any]:
     return [
         CommandHandler("start", start_command),
         CommandHandler("hoje", today_command),
+        CommandHandler("aovivo", live_command),
         CommandHandler("calendario", calendar_command),
         CommandHandler("selecoes", teams_command),
         CallbackQueryHandler(callback_query_handler),

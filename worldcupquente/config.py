@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+type ChatId = int | str
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -20,6 +22,8 @@ class Settings:
     espn_timeout: float = 30.0
     espn_user_agent: str = "WorldCupQuente/0.1"
     log_level: str = "INFO"
+    live_notification_chat_ids: tuple[ChatId, ...] = ()
+    live_poll_interval_seconds: int = 30
 
     @property
     def zoneinfo(self) -> ZoneInfo:
@@ -36,4 +40,16 @@ def get_settings() -> Settings:
         espn_timeout=float(os.getenv("ESPN_TIMEOUT", "30")),
         espn_user_agent=os.getenv("ESPN_USER_AGENT", "WorldCupQuente/0.1"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        live_notification_chat_ids=_parse_chat_ids(os.getenv("LIVE_NOTIFICATION_CHAT_IDS", "")),
+        live_poll_interval_seconds=max(10, int(os.getenv("LIVE_POLL_INTERVAL_SECONDS", "30"))),
     )
+
+
+def _parse_chat_ids(value: str) -> tuple[ChatId, ...]:
+    chat_ids: list[ChatId] = []
+    for raw_chat_id in value.split(","):
+        chat_id = raw_chat_id.strip()
+        if not chat_id:
+            continue
+        chat_ids.append(int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id)
+    return tuple(chat_ids)
