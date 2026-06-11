@@ -110,6 +110,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
     if query.data.startswith("cal:team:"):
         await _send_calendar_team_games(query, context, query.data)
+        return
 
 
 def get_handlers() -> list[Any]:
