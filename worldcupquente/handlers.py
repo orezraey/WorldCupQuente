@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "start")
     message = update.effective_message
     if message is None:
         return
@@ -51,6 +52,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "hoje")
     message = update.effective_message
     if message is None:
         return
@@ -66,6 +68,7 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "aovivo")
     message = update.effective_message
     if message is None:
         return
@@ -81,6 +84,7 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def teams_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "selecoes")
     message = update.effective_message
     if message is None:
         return
@@ -88,6 +92,7 @@ async def teams_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "calendario")
     message = update.effective_message
     if message is None:
         return
@@ -139,6 +144,17 @@ def get_handlers() -> list[Any]:
         CommandHandler("selecoes", teams_command),
         CallbackQueryHandler(callback_query_handler),
     ]
+
+
+def _log_command(update: Update, command: str) -> None:
+    logger.info(
+        "Command received",
+        extra={
+            "command": command,
+            "chat_id": getattr(update.effective_chat, "id", None),
+            "chat_type": getattr(update.effective_chat, "type", None),
+        },
+    )
 
 
 def _get_service(context: ContextTypes.DEFAULT_TYPE) -> WorldCupService:
