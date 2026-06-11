@@ -6,6 +6,7 @@ Bot Telegram para acompanhar a Copa do Mundo 2026 usando endpoints públicos da 
 
 - `/start` - ajuda rápida
 - `/hoje` - jogos do dia
+- `/calendario` - calendário por datas ou seleções
 - `/selecoes` - lista seleções e permite abrir o elenco geral
 
 ## Configuração

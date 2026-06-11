@@ -34,10 +34,24 @@ def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> li
 
 def format_today_games(scoreboard: dict[str, Any], tz: ZoneInfo) -> str:
     events = scoreboard.get("events", [])
-    if not events:
-        return "Nenhum jogo da Copa do Mundo encontrado para hoje."
+    return format_games(
+        events,
+        tz,
+        "Jogos de hoje - Copa do Mundo 2026",
+        "Nenhum jogo da Copa do Mundo encontrado para hoje.",
+    )
 
-    lines = ["<b>Jogos de hoje - Copa do Mundo 2026</b>", ""]
+
+def format_games(
+    events: list[dict[str, Any]],
+    tz: ZoneInfo,
+    title: str,
+    empty_message: str = "Nenhum jogo encontrado.",
+) -> str:
+    if not events:
+        return empty_message
+
+    lines = [f"<b>{escape(title)}</b>", ""]
     for event in sorted(events, key=lambda item: item.get("date", "")):
         lines.extend(_format_event(event, tz))
         lines.append("")
