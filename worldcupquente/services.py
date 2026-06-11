@@ -34,9 +34,9 @@ class WorldCupService:
     def today_date_param(self) -> str:
         return datetime.now(tz=self.bot_timezone).strftime("%Y%m%d")
 
-    async def get_games_by_date(self, date_param: str) -> dict[str, Any]:
+    async def get_games_by_date(self, date_param: str, use_cache: bool = True) -> dict[str, Any]:
         cache_key = f"scoreboard:{date_param}"
-        cached = self.cache.get(cache_key)
+        cached = self.cache.get(cache_key) if use_cache else None
         if cached is not None:
             return cached
 
@@ -46,11 +46,16 @@ class WorldCupService:
             date=date_param,
             limit=100,
         )
-        self.cache.set(cache_key, data, TODAY_GAMES_CACHE_SECONDS)
+        if use_cache:
+            self.cache.set(cache_key, data, TODAY_GAMES_CACHE_SECONDS)
         return data
 
-    async def get_today_games(self) -> dict[str, Any]:
-        return await self.get_games_by_date(self.today_date_param())
+    async def get_today_games(self, use_cache: bool = True) -> dict[str, Any]:
+        return await self.get_games_by_date(self.today_date_param(), use_cache=use_cache)
+
+    async def get_live_events(self, use_cache: bool = True) -> list[dict[str, Any]]:
+        scoreboard = await self.get_today_games(use_cache=use_cache)
+        return live_events_from_scoreboard(scoreboard)
 
     async def get_schedule(self) -> dict[str, Any]:
         date_range = f"{WORLD_CUP_START_DATE}-{WORLD_CUP_END_DATE}"
@@ -129,3 +134,22 @@ def _event_has_team(event: dict[str, Any], team_id: str) -> bool:
         if str(team.get("id", "")) == str(team_id):
             return True
     return False
+
+
+def live_events_from_scoreboard(scoreboard: dict[str, Any]) -> list[dict[str, Any]]:
+    return [event for event in scoreboard.get("events", []) if event_state(event) == "in"]
+
+
+def event_state(event: dict[str, Any]) -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    status = competition.get("status") or event.get("status") or {}
+    return str((status.get("type") or {}).get("state") or "")
+
+
+def scoring_plays_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    competition = (event.get("competitions") or [{}])[0]
+    return [
+        detail
+        for detail in competition.get("details", [])
+        if detail.get("scoringPlay") is True and detail.get("shootout") is not True
+    ]

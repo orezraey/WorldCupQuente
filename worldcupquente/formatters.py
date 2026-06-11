@@ -42,6 +42,44 @@ def format_today_games(scoreboard: dict[str, Any], tz: ZoneInfo) -> str:
     )
 
 
+def format_live_games(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
+    if not events:
+        return "Nenhuma partida da Copa do Mundo está ao vivo no momento."
+
+    lines = ["<b>Partidas ao vivo - Copa do Mundo 2026</b>", ""]
+    for event in sorted(events, key=lambda item: item.get("date", "")):
+        lines.extend(_format_live_event(event, tz))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    team = _find_team_by_id(competitors, str((detail.get("team") or {}).get("id", "")))
+    athlete = (detail.get("athletesInvolved") or [{}])[0]
+    scorer = athlete.get("displayName") or athlete.get("fullName") or "Autor indisponível"
+    minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
+    goal_type = str((detail.get("type") or {}).get("text") or "Goal")
+    goal_note = " contra" if detail.get("ownGoal") else ""
+
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    status = competition.get("status") or event.get("status") or {}
+    state = (status.get("type") or {}).get("state", "in")
+
+    lines = [
+        "<b>Gol na Copa do Mundo!</b>",
+        f"Minuto: <b>{escape(str(minute))}</b>",
+        f"Autor: <b>{escape(str(scorer))}</b>",
+        f"Seleção: <b>{translated_team_name_html(team)}</b>",
+        f"Tipo: {escape(_translated_goal_type(goal_type))}{escape(goal_note)}",
+        "",
+        _format_matchup(home, away, str(state)),
+    ]
+    return "\n".join(lines)
+
+
 def format_games(
     events: list[dict[str, Any]],
     tz: ZoneInfo,
@@ -86,11 +124,48 @@ def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
     return lines
 
 
+def _format_live_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
+    competition = (event.get("competitions") or [{}])[0]
+    status = competition.get("status") or event.get("status") or {}
+    status_type = status.get("type", {})
+    status_text = _translated_status(
+        status_type.get("shortDetail") or status_type.get("detail") or "Ao vivo"
+    )
+    display_clock = status.get("displayClock")
+
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    time_text = event_time.strftime("%d/%m %H:%M") if event_time else "Horário indefinido"
+
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    matchup = _format_matchup(home, away, "in")
+
+    venue = competition.get("venue", {}) or event.get("venue", {})
+    venue_name = venue.get("fullName") or venue.get("displayName")
+
+    lines = [f"<b>{escape(time_text)}</b> - {matchup}"]
+    if display_clock:
+        lines.append(f"Minuto: {escape(str(display_clock))}")
+    lines.append(f"Status: {escape(str(status_text))}")
+    if venue_name:
+        lines.append(f"Estádio: {escape(str(venue_name))}")
+    return lines
+
+
 def _find_competitor(competitors: list[dict[str, Any]], home_away: str) -> dict[str, Any] | None:
     for competitor in competitors:
         if competitor.get("homeAway") == home_away:
             return competitor
     return None
+
+
+def _find_team_by_id(competitors: list[dict[str, Any]], team_id: str) -> dict[str, Any]:
+    for competitor in competitors:
+        team = competitor.get("team", {}) or {}
+        if str(team.get("id", "")) == team_id:
+            return team
+    return {"id": team_id}
 
 
 def _format_matchup(
@@ -209,3 +284,11 @@ def _translated_status(status_text: str) -> str:
         "Cancelled": "Cancelado",
     }
     return translations.get(status_text, status_text)
+
+
+def _translated_goal_type(goal_type: str) -> str:
+    translations = {
+        "Goal": "Gol",
+        "Penalty - Scored": "Pênalti convertido",
+    }
+    return translations.get(goal_type, goal_type)
