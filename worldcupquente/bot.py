@@ -17,7 +17,6 @@ from worldcupquente.services import WorldCupService, scoring_plays_from_event
 logger = logging.getLogger(__name__)
 
 SEEN_GOAL_IDS_KEY = "live_seen_goal_ids"
-SEEDED_EVENT_IDS_KEY = "live_seeded_event_ids"
 
 
 def build_application() -> Application:
@@ -33,7 +32,7 @@ def build_application() -> Application:
     application = Application.builder().token(settings.telegram_bot_token).build()
     application.bot_data["world_cup_service"] = WorldCupService(settings)
     application.bot_data[SEEN_GOAL_IDS_KEY] = set()
-    application.bot_data[SEEDED_EVENT_IDS_KEY] = set()
+    application.bot_data["live_is_bootstrapped"] = False
     for handler in get_handlers():
         application.add_handler(handler)
     if settings.live_notification_chat_ids:
@@ -60,21 +59,20 @@ async def live_goal_monitor_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     seen_goal_ids: set[str] = context.application.bot_data.setdefault(SEEN_GOAL_IDS_KEY, set())
-    seeded_event_ids: set[str] = context.application.bot_data.setdefault(SEEDED_EVENT_IDS_KEY, set())
+    is_bootstrapped = context.application.bot_data.get("live_is_bootstrapped", False)
     notifications: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     for event in live_events:
-        event_id = str(event.get("id", ""))
-        event_was_seeded = event_id in seeded_event_ids
         for detail in scoring_plays_from_event(event):
             goal_id = _goal_id(event, detail)
             if goal_id in seen_goal_ids:
                 continue
             seen_goal_ids.add(goal_id)
-            if event_was_seeded:
+            if is_bootstrapped:
                 notifications.append((event, detail))
-        if event_id:
-            seeded_event_ids.add(event_id)
+
+    if not is_bootstrapped:
+        context.application.bot_data["live_is_bootstrapped"] = True
 
     for event, detail in notifications:
         text = format_goal_notification(event, detail)
