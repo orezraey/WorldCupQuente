@@ -11,7 +11,8 @@ WorldCupQuente é um bot para Telegram que acompanha jogos da Copa do Mundo FIFA
 - Navegação pelo calendário por data ou seleção.
 - Classificação da fase de grupos.
 - Lista de seleções e elencos.
-- Notificações configuráveis por chat para gol, pênalti, cartão vermelho, intervalo e fim de jogo.
+- Notificações configuráveis por chat para início de jogo, gol, pênalti, cartão vermelho, intervalo e fim de jogo.
+- Escopo de notificações por seleção: todas por padrão ou apenas seleções seguidas pelo `/selecoes`.
 - Seleção de idioma por chat em inglês ou português pelo `/config`.
 
 ## Comandos Do Bot
@@ -97,11 +98,15 @@ worldcupquente --drop-pending-updates
 
 O parâmetro `--drop-pending-updates` descarta mensagens acumuladas enquanto o bot estava offline.
 
-## Notificações Ao Vivo
+## Notificações
 
-O monitor em segundo plano consulta partidas ativas e envia alertas para os chats configurados. As notificações são deduplicadas em memória durante a execução do processo.
+O monitor em segundo plano consulta partidas próximas e ativas, então envia alertas para os chats configurados. As notificações são deduplicadas em memória durante a execução do processo.
 
-O comando `/config` permite que cada chat ligue ou desligue tipos específicos de alerta e escolha inglês ou português. Essas preferências são salvas no caminho definido por `NOTIFICATION_CONFIG_PATH`.
+Por padrão, um chat recebe notificações de todas as seleções, incluindo um alerta cerca de 5 minutos antes de a bola rolar. O comando `/config` permite alternar entre todas as seleções e apenas seleções seguidas, ligar ou desligar tipos específicos de alerta e escolher inglês ou português.
+
+Quando o chat está configurado para apenas seleções seguidas, abra `/selecoes`, escolha uma seleção e use o botão de notificações na tela do elenco. Se o chat estiver configurado para todas as seleções, esse botão fica oculto porque seguir seleções individualmente não é necessário.
+
+Essas preferências são salvas no caminho definido por `NOTIFICATION_CONFIG_PATH`.
 
 Para notificações de fim de jogo, o bot tenta usar `sendRichMessage` quando disponível no ambiente do Telegram utilizado. Caso esse método falhe, a aplicação registra o erro e envia uma mensagem HTML convencional como fallback.
 

@@ -11,7 +11,8 @@ WorldCupQuente is a Telegram bot for following FIFA World Cup 2026 matches using
 - Calendar navigation by date or team.
 - Group-stage standings.
 - Teams and rosters.
-- Per-chat configurable notifications for goals, penalties, red cards, halftime, and full time.
+- Per-chat configurable notifications for match start, goals, penalties, red cards, halftime, and full time.
+- Team notification scope: all teams by default, or followed teams selected through `/teams`.
 - Per-chat language selection in English or Portuguese through `/config`.
 
 ## Bot Commands
@@ -97,11 +98,15 @@ worldcupquente --drop-pending-updates
 
 The `--drop-pending-updates` option discards messages queued while the bot was offline.
 
-## Live Notifications
+## Notifications
 
-The background monitor polls active matches and sends alerts to configured chats. Notifications are deduplicated in memory while the process is running.
+The background monitor polls upcoming and active matches, then sends alerts to configured chats. Notifications are deduplicated in memory while the process is running.
 
-The `/config` command lets each chat enable or disable specific alert types and choose English or Portuguese. These preferences are saved to the path defined by `NOTIFICATION_CONFIG_PATH`.
+By default, a chat receives notifications for all teams, including an alert about 5 minutes before kickoff. The `/config` command lets each chat switch between all teams and followed teams only, enable or disable specific alert types, and choose English or Portuguese.
+
+When a chat is configured for followed teams only, open `/teams`, choose a team, and use the notification button on that team's roster screen. If the chat is configured for all teams, that button is hidden because following individual teams is not needed.
+
+These preferences are saved to the path defined by `NOTIFICATION_CONFIG_PATH`.
 
 For full-time notifications, the bot tries to use `sendRichMessage` when available in the Telegram environment being used. If that method fails, the application logs the error and sends a regular HTML message as fallback.
 

@@ -42,7 +42,9 @@ def _get_chat_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     chat = update.effective_chat
     if chat is None:
         return "en"
-    return _get_notification_preferences(context).get_language(chat.id)
+    preferences = _get_notification_preferences(context)
+    preferences.ensure_chat(chat.id)
+    return preferences.get_language(chat.id)
 
 
 def _get_query_language(query: object, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -50,4 +52,6 @@ def _get_query_language(query: object, context: ContextTypes.DEFAULT_TYPE) -> st
     chat_id = getattr(message, "chat_id", None)
     if chat_id is None:
         return "en"
-    return _get_notification_preferences(context).get_language(chat_id)
+    preferences = _get_notification_preferences(context)
+    preferences.ensure_chat(chat_id)
+    return preferences.get_language(chat_id)

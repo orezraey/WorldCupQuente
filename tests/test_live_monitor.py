@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.live_monitor import (
     LiveMonitorState,
     _collect_live_notifications,
+    _collect_pre_game_notifications,
     _collect_status_notifications,
     _play_match_key,
     _send_incident_notifications,
@@ -18,6 +20,7 @@ from worldcupquente.notification_preferences import (
     FULL_TIME_NOTIFICATION,
     GOAL_NOTIFICATION,
     PENALTY_NOTIFICATION,
+    PRE_GAME_NOTIFICATION,
 )
 
 
@@ -26,6 +29,7 @@ def test_collect_live_notifications_bootstrap_records_without_sending():
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -46,6 +50,7 @@ def test_collect_live_notifications_deduplicates_seen_score_change():
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -65,6 +70,7 @@ def test_collect_live_notifications_tracks_penalty_goal_key():
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -84,6 +90,7 @@ def test_collect_status_notifications_bootstrap_records_without_sending():
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -102,6 +109,7 @@ def test_collect_status_notifications_hydrates_full_time_event():
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -116,6 +124,46 @@ def test_collect_status_notifications_hydrates_full_time_event():
     assert notifications[0][0] == FULL_TIME_NOTIFICATION
     assert notifications[0][1]["boxscore"] == {"teams": []}
     assert state.seen_full_time_ids == {"match-1"}
+
+
+def test_collect_pre_game_notifications_within_five_minutes_once():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={},
+        is_bootstrapped=True,
+    )
+    now = datetime(2026, 6, 12, 15, 25, tzinfo=UTC)
+    event = _status_event("pre", date=(now + timedelta(minutes=4)).isoformat())
+
+    first_notifications = _collect_pre_game_notifications([event], state, now)
+    second_notifications = _collect_pre_game_notifications([event], state, now)
+
+    assert first_notifications == [event]
+    assert second_notifications == []
+    assert state.seen_pre_game_ids == {"match-1"}
+
+
+def test_collect_pre_game_notifications_ignores_later_games():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={},
+        is_bootstrapped=True,
+    )
+    now = datetime(2026, 6, 12, 15, 25, tzinfo=UTC)
+    event = _status_event("pre", date=(now + timedelta(minutes=6)).isoformat())
+
+    assert _collect_pre_game_notifications([event], state, now) == []
+    assert state.seen_pre_game_ids == set()
 
 
 def test_send_incident_notifications_suppresses_penalty_when_goal_enabled():
@@ -175,11 +223,14 @@ def _status_event(
     state: str,
     short_detail: str | None = None,
     completed: bool = False,
+    date: str = "2026-06-12T15:30:00Z",
 ) -> dict[str, Any]:
     return {
         "id": "match-1",
+        "date": date,
         "competitions": [
             {
+                "date": date,
                 "status": {
                     "displayClock": short_detail,
                     "type": {
@@ -225,7 +276,13 @@ class _FakePreferences:
     def __init__(self, goal_enabled: dict[int, bool]):
         self.goal_enabled = goal_enabled
 
-    def enabled_chat_ids(self, _notification_type: str, static_chat_ids: tuple[int, ...]) -> list[int]:
+    def enabled_chat_ids(
+        self,
+        _notification_type: str,
+        static_chat_ids: tuple[int, ...],
+        team_ids: set[str] | None = None,
+    ) -> list[int]:
+        assert _notification_type != PRE_GAME_NOTIFICATION or team_ids is not None
         return list(static_chat_ids)
 
     def get(self, chat_id: int) -> dict[str, bool]:

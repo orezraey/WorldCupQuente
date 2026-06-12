@@ -8,7 +8,13 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from worldcupquente.i18n import LANGUAGE_LABELS, text
-from worldcupquente.notification_preferences import LANGUAGE_KEY, NOTIFICATION_TYPES
+from worldcupquente.notification_preferences import (
+    LANGUAGE_KEY,
+    NOTIFICATION_TYPES,
+    TEAM_SCOPE_ALL,
+    TEAM_SCOPE_FOLLOWED,
+    TEAM_SCOPE_KEY,
+)
 from worldcupquente.team_translations import translated_team_name
 
 TEAMS_PAGE_SIZE = 12
@@ -72,10 +78,21 @@ def build_teams_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
-def build_back_to_teams_keyboard(page: int = 0, language: str = "en") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(text("back_to_teams", language), callback_data=f"teams:{page}")]]
-    )
+def build_back_to_teams_keyboard(
+    page: int = 0,
+    language: str = "en",
+    team_id: str | None = None,
+    show_notifications_button: bool = False,
+    is_following: bool = False,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_notifications_button and team_id:
+        label_key = "team_notifications_disable" if is_following else "team_notifications_enable"
+        rows.append(
+            [InlineKeyboardButton(text(label_key, language), callback_data=f"team:notify:{team_id}:{page}")]
+        )
+    rows.append([InlineKeyboardButton(text("back_to_teams", language), callback_data=f"teams:{page}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_calendar_menu_keyboard(language: str = "en") -> InlineKeyboardMarkup:
@@ -97,6 +114,20 @@ def build_live_stats_keyboard(show_stats: bool = False, language: str = "en") ->
 
 def build_notification_config_keyboard(settings: dict[str, Any], language: str = "en") -> InlineKeyboardMarkup:
     rows = []
+    selected_scope = settings.get(TEAM_SCOPE_KEY, TEAM_SCOPE_ALL)
+    rows.append([InlineKeyboardButton(text("config_team_scope", language), callback_data="config:noop")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                f"{'* ' if selected_scope == TEAM_SCOPE_ALL else ''}{text('team_scope_all', language)}",
+                callback_data=f"config:team_scope:{TEAM_SCOPE_ALL}",
+            ),
+            InlineKeyboardButton(
+                f"{'* ' if selected_scope == TEAM_SCOPE_FOLLOWED else ''}{text('team_scope_followed', language)}",
+                callback_data=f"config:team_scope:{TEAM_SCOPE_FOLLOWED}",
+            ),
+        ]
+    )
     for notification_type in NOTIFICATION_TYPES:
         state = text("state_on" if settings.get(notification_type, True) else "state_off", language)
         label = f"{text(f'notification_{notification_type}', language)}: {state}"

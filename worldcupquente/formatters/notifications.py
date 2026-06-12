@@ -6,6 +6,7 @@ from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.formatters.games import _format_live_event
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
@@ -20,6 +21,28 @@ from worldcupquente.team_translations import translated_team_name_html
 
 def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
     return "\n".join(_format_live_event(event, tz, show_stats=False, language=language))
+
+
+def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    venue = competition.get("venue", {}) or event.get("venue", {})
+    venue_name = venue.get("fullName") or venue.get("displayName")
+
+    lines = [
+        f"<b>⏰ {text('pre_game_header', language)}</b>",
+        text("pre_game_body", language),
+        "",
+        _format_matchup(home, away, "pre", language),
+    ]
+    if event_time:
+        lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
+    if venue_name:
+        lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+    return "\n".join(lines)
 
 
 def format_full_time_notification_rich(

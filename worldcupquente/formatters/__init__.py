@@ -13,6 +13,7 @@ from worldcupquente.formatters.notifications import (
     format_goal_notification,
     format_match_status_notification,
     format_penalty_notification,
+    format_pre_game_notification,
     format_red_card_notification,
 )
 from worldcupquente.formatters.rosters import format_team_roster
@@ -31,5 +32,6 @@ __all__ = [
     "format_full_time_notification_rich",
     "format_goal_notification",
     "format_penalty_notification",
+    "format_pre_game_notification",
     "format_red_card_notification",
 ]

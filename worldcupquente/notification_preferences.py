@@ -13,12 +13,14 @@ from worldcupquente.i18n import DEFAULT_LANGUAGE, normalize_language
 logger = logging.getLogger(__name__)
 
 GOAL_NOTIFICATION = "goal"
+PRE_GAME_NOTIFICATION = "pre_game"
 HALFTIME_NOTIFICATION = "halftime"
 FULL_TIME_NOTIFICATION = "full_time"
 PENALTY_NOTIFICATION = "penalty"
 RED_CARD_NOTIFICATION = "red_card"
 
 NOTIFICATION_TYPES = (
+    PRE_GAME_NOTIFICATION,
     GOAL_NOTIFICATION,
     PENALTY_NOTIFICATION,
     RED_CARD_NOTIFICATION,
@@ -29,6 +31,11 @@ LEGACY_NOTIFICATION_TYPES = (GOAL_NOTIFICATION, PENALTY_NOTIFICATION, RED_CARD_N
 STATUS_NOTIFICATION_TYPES = (HALFTIME_NOTIFICATION, FULL_TIME_NOTIFICATION)
 DEFAULT_NOTIFICATION_SETTINGS = dict.fromkeys(NOTIFICATION_TYPES, True)
 LANGUAGE_KEY = "language"
+TEAM_SCOPE_KEY = "team_scope"
+FOLLOWED_TEAM_IDS_KEY = "followed_team_ids"
+TEAM_SCOPE_ALL = "all"
+TEAM_SCOPE_FOLLOWED = "followed"
+TEAM_SCOPES = (TEAM_SCOPE_ALL, TEAM_SCOPE_FOLLOWED)
 LEGACY_DEFAULT_LANGUAGE = "pt"
 
 
@@ -55,11 +62,42 @@ class NotificationPreferences:
 
     def set_language(self, chat_id: ChatId, language: str) -> dict[str, Any]:
         key = self._chat_key(chat_id)
-        current = self._items.get(key, {}).copy()
+        current = self.ensure_chat(chat_id)
         current[LANGUAGE_KEY] = normalize_language(language)
         self._items[key] = current
         self.save()
         return self.get(chat_id)
+
+    def get_team_scope(self, chat_id: ChatId) -> str:
+        return str(self.get(chat_id).get(TEAM_SCOPE_KEY, TEAM_SCOPE_ALL))
+
+    def set_team_scope(self, chat_id: ChatId, team_scope: str) -> dict[str, Any]:
+        if team_scope not in TEAM_SCOPES:
+            raise ValueError(f"Invalid team notification scope: {team_scope}")
+        current = self.ensure_chat(chat_id)
+        current[TEAM_SCOPE_KEY] = team_scope
+        self._items[self._chat_key(chat_id)] = current
+        self.save()
+        return current
+
+    def followed_team_ids(self, chat_id: ChatId) -> list[str]:
+        return list(self.get(chat_id).get(FOLLOWED_TEAM_IDS_KEY, []))
+
+    def is_following_team(self, chat_id: ChatId, team_id: str) -> bool:
+        return str(team_id) in set(self.followed_team_ids(chat_id))
+
+    def toggle_followed_team(self, chat_id: ChatId, team_id: str) -> dict[str, Any]:
+        team_id = str(team_id)
+        current = self.ensure_chat(chat_id)
+        followed = set(self.followed_team_ids(chat_id))
+        if team_id in followed:
+            followed.remove(team_id)
+        else:
+            followed.add(team_id)
+        current[FOLLOWED_TEAM_IDS_KEY] = sorted(followed)
+        self._items[self._chat_key(chat_id)] = current
+        self.save()
+        return current
 
     def toggle(self, chat_id: ChatId, notification_type: str) -> dict[str, Any]:
         if notification_type not in NOTIFICATION_TYPES:
@@ -70,13 +108,22 @@ class NotificationPreferences:
         self.save()
         return current
 
-    def enabled_chat_ids(self, notification_type: str, static_chat_ids: tuple[ChatId, ...]) -> list[ChatId]:
+    def enabled_chat_ids(
+        self,
+        notification_type: str,
+        static_chat_ids: tuple[ChatId, ...],
+        team_ids: set[str] | None = None,
+    ) -> list[ChatId]:
         chat_ids = [*static_chat_ids, *self.configured_chat_ids()]
         seen: set[str] = set()
         enabled: list[ChatId] = []
         for chat_id in chat_ids:
             key = self._chat_key(chat_id)
-            if key in seen or not self.get(chat_id).get(notification_type, True):
+            if (
+                key in seen
+                or not self.get(chat_id).get(notification_type, True)
+                or not self._matches_team_scope(chat_id, team_ids)
+            ):
                 continue
             seen.add(key)
             enabled.append(chat_id)
@@ -89,7 +136,7 @@ class NotificationPreferences:
         return [
             self._parse_chat_key(chat_id)
             for chat_id, settings in self._items.items()
-            if self._has_notification_settings(settings)
+            if self._has_recipient_settings(settings)
         ]
 
     def save(self) -> None:
@@ -121,8 +168,9 @@ class NotificationPreferences:
     @staticmethod
     def _validated_settings(settings: dict[str, Any]) -> dict[str, Any]:
         has_notification_settings = NotificationPreferences._has_notification_settings(settings)
+        has_team_settings = NotificationPreferences._has_team_settings(settings)
         validated: dict[str, Any] = {}
-        if has_notification_settings:
+        if has_notification_settings or has_team_settings:
             validated.update(
                 {
                     notification_type: bool(
@@ -136,6 +184,11 @@ class NotificationPreferences:
                     for notification_type in NOTIFICATION_TYPES
                 }
             )
+            team_scope = str(settings.get(TEAM_SCOPE_KEY, TEAM_SCOPE_ALL))
+            validated[TEAM_SCOPE_KEY] = team_scope if team_scope in TEAM_SCOPES else TEAM_SCOPE_ALL
+            validated[FOLLOWED_TEAM_IDS_KEY] = NotificationPreferences._validated_team_ids(
+                settings.get(FOLLOWED_TEAM_IDS_KEY, [])
+            )
         default_language = LEGACY_DEFAULT_LANGUAGE if has_notification_settings else DEFAULT_LANGUAGE
         validated[LANGUAGE_KEY] = normalize_language(str(settings.get(LANGUAGE_KEY, default_language)))
         return validated
@@ -145,8 +198,36 @@ class NotificationPreferences:
         return any(notification_type in settings for notification_type in NOTIFICATION_TYPES)
 
     @staticmethod
+    def _has_team_settings(settings: dict[str, Any]) -> bool:
+        return TEAM_SCOPE_KEY in settings or FOLLOWED_TEAM_IDS_KEY in settings
+
+    @staticmethod
+    def _has_recipient_settings(settings: dict[str, Any]) -> bool:
+        return NotificationPreferences._has_notification_settings(
+            settings
+        ) or NotificationPreferences._has_team_settings(settings)
+
+    @staticmethod
     def _default_settings() -> dict[str, Any]:
-        return {**DEFAULT_NOTIFICATION_SETTINGS, LANGUAGE_KEY: DEFAULT_LANGUAGE}
+        return {
+            **DEFAULT_NOTIFICATION_SETTINGS,
+            TEAM_SCOPE_KEY: TEAM_SCOPE_ALL,
+            FOLLOWED_TEAM_IDS_KEY: [],
+            LANGUAGE_KEY: DEFAULT_LANGUAGE,
+        }
+
+    @staticmethod
+    def _validated_team_ids(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return sorted({str(item) for item in value if str(item)})
+
+    def _matches_team_scope(self, chat_id: ChatId, team_ids: set[str] | None) -> bool:
+        if self.get_team_scope(chat_id) == TEAM_SCOPE_ALL:
+            return True
+        if team_ids is None:
+            return True
+        return bool(set(self.followed_team_ids(chat_id)) & {str(team_id) for team_id in team_ids})
 
     @staticmethod
     def _missing_notification_default(settings: dict[str, Any], notification_type: str) -> bool:

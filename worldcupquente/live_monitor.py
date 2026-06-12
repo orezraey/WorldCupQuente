@@ -6,12 +6,13 @@ import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from telegram.constants import ParseMode
 from telegram.ext import Application
 
-from worldcupquente.espn_events import event_from_summary
+from worldcupquente.espn_events import event_from_summary, parse_espn_datetime
 from worldcupquente.event_incidents import (
     penalty_plays_from_event,
     red_cards_from_event,
@@ -22,6 +23,7 @@ from worldcupquente.formatters import (
     format_goal_notification,
     format_match_status_notification,
     format_penalty_notification,
+    format_pre_game_notification,
     format_red_card_notification,
 )
 from worldcupquente.i18n import text
@@ -30,6 +32,7 @@ from worldcupquente.notification_preferences import (
     GOAL_NOTIFICATION,
     HALFTIME_NOTIFICATION,
     PENALTY_NOTIFICATION,
+    PRE_GAME_NOTIFICATION,
     RED_CARD_NOTIFICATION,
     NotificationPreferences,
 )
@@ -40,11 +43,13 @@ logger = logging.getLogger(__name__)
 SEEN_GOAL_IDS_KEY = "live_seen_goal_ids"
 SEEN_PENALTY_IDS_KEY = "live_seen_penalty_ids"
 SEEN_RED_CARD_IDS_KEY = "live_seen_red_card_ids"
+SEEN_PRE_GAME_IDS_KEY = "live_seen_pre_game_ids"
 SEEN_HALFTIME_IDS_KEY = "live_seen_halftime_ids"
 SEEN_FULL_TIME_IDS_KEY = "live_seen_full_time_ids"
 LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
 LIVE_MONITOR_TASK_KEY = "live_monitor_task"
 NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
+PRE_GAME_NOTIFICATION_WINDOW = timedelta(minutes=5)
 
 
 async def start_live_monitor(application: Application) -> None:
@@ -99,6 +104,7 @@ async def poll_live_notifications(application: Application) -> None:
     state = _live_monitor_state(application)
 
     notifications, penalty_goal_keys = _collect_live_notifications(live_events, state)
+    pre_game_notifications = _collect_pre_game_notifications(status_events, state)
     status_notifications = await _collect_status_notifications(status_events, state, service)
 
     _mark_bootstrapped(application, state)
@@ -116,6 +122,12 @@ async def poll_live_notifications(application: Application) -> None:
         preferences,
         service,
     )
+    await _send_pre_game_notifications(
+        application,
+        pre_game_notifications,
+        preferences,
+        service,
+    )
 
 
 @dataclass
@@ -123,6 +135,7 @@ class LiveMonitorState:
     seen_goal_ids: set[str]
     seen_penalty_ids: set[str]
     seen_red_card_ids: set[str]
+    seen_pre_game_ids: set[str]
     seen_halftime_ids: set[str]
     seen_full_time_ids: set[str]
     score_snapshots: dict[str, tuple[int, ...]]
@@ -134,6 +147,7 @@ def _live_monitor_state(application: Application) -> LiveMonitorState:
         seen_goal_ids=application.bot_data.setdefault(SEEN_GOAL_IDS_KEY, set()),
         seen_penalty_ids=application.bot_data.setdefault(SEEN_PENALTY_IDS_KEY, set()),
         seen_red_card_ids=application.bot_data.setdefault(SEEN_RED_CARD_IDS_KEY, set()),
+        seen_pre_game_ids=application.bot_data.setdefault(SEEN_PRE_GAME_IDS_KEY, set()),
         seen_halftime_ids=application.bot_data.setdefault(SEEN_HALFTIME_IDS_KEY, set()),
         seen_full_time_ids=application.bot_data.setdefault(SEEN_FULL_TIME_IDS_KEY, set()),
         score_snapshots=application.bot_data.setdefault(LIVE_SCORE_SNAPSHOTS_KEY, {}),
@@ -196,6 +210,32 @@ def _collect_live_notifications(
     return notifications, scored_penalty_goal_keys
 
 
+def _collect_pre_game_notifications(
+    status_events: list[dict[str, Any]],
+    state: LiveMonitorState,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    notifications: list[dict[str, Any]] = []
+    current_time = now or datetime.now(UTC)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=UTC)
+    current_time = current_time.astimezone(UTC)
+
+    for event in status_events:
+        event_id = str(event.get("id", ""))
+        if not event_id or event_id in state.seen_pre_game_ids or not _is_pre_game_event(event):
+            continue
+        event_time = parse_espn_datetime(event.get("date", ""), UTC)
+        if event_time is None:
+            continue
+        time_until = event_time - current_time
+        if timedelta(0) <= time_until <= PRE_GAME_NOTIFICATION_WINDOW:
+            state.seen_pre_game_ids.add(event_id)
+            notifications.append(event)
+
+    return notifications
+
+
 async def _collect_status_notifications(
     status_events: list[dict[str, Any]],
     state: LiveMonitorState,
@@ -242,6 +282,7 @@ async def _send_incident_notifications(
         chat_ids = preferences.enabled_chat_ids(
             notification_type,
             service.settings.live_notification_chat_ids,
+            _event_team_ids(event),
         )
         if (
             notification_type == PENALTY_NOTIFICATION
@@ -279,6 +320,7 @@ async def _send_status_notifications(
         chat_ids = preferences.enabled_chat_ids(
             notification_type,
             service.settings.live_notification_chat_ids,
+            _event_team_ids(event),
         )
         full_time_html = None
         halftime_text = None
@@ -332,6 +374,33 @@ async def _send_status_notifications(
                 logger.exception(
                     "Failed to send game status notification",
                     extra={"chat_id": chat_id, "notification_type": notification_type},
+                )
+
+
+async def _send_pre_game_notifications(
+    application: Application,
+    pre_game_notifications: list[dict[str, Any]],
+    preferences: NotificationPreferences,
+    service: WorldCupService,
+) -> None:
+    for event in pre_game_notifications:
+        chat_ids = preferences.enabled_chat_ids(
+            PRE_GAME_NOTIFICATION,
+            service.settings.live_notification_chat_ids,
+            _event_team_ids(event),
+        )
+        for chat_id in chat_ids:
+            language = preferences.get_language(chat_id)
+            try:
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text=format_pre_game_notification(event, service.bot_timezone, language),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send pre-game notification",
+                    extra={"chat_id": chat_id, "notification_type": PRE_GAME_NOTIFICATION},
                 )
 
 
@@ -409,6 +478,12 @@ def _is_full_time_event(event: dict[str, Any]) -> bool:
     status = _event_status(event)
     status_type = status.get("type") or {}
     return status_type.get("state") == "post" or status_type.get("completed") is True
+
+
+def _is_pre_game_event(event: dict[str, Any]) -> bool:
+    status = _event_status(event)
+    status_type = status.get("type") or {}
+    return status_type.get("state") == "pre"
 
 
 def _event_status(event: dict[str, Any]) -> dict[str, Any]:

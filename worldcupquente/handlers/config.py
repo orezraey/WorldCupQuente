@@ -29,7 +29,7 @@ async def _send_notification_config(
     chat_id: int,
 ) -> None:
     preferences = _get_notification_preferences(context)
-    settings = preferences.get(chat_id)
+    settings = preferences.ensure_chat(chat_id)
     language = preferences.get_language(chat_id)
     await send_message(
         _config_text(language),
@@ -72,6 +72,25 @@ async def _set_config_language(query: Any, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+async def _set_team_scope(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if query.message is None:
+        return
+    team_scope = query.data.rsplit(":", maxsplit=1)[-1]
+    preferences = _get_notification_preferences(context)
+    try:
+        settings = preferences.set_team_scope(query.message.chat_id, team_scope)
+    except ValueError:
+        await query.edit_message_text(text("config_invalid", preferences.get_language(query.message.chat_id)))
+        return
+
+    language = preferences.get_language(query.message.chat_id)
+    await query.edit_message_text(
+        _config_text(language),
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_notification_config_keyboard(settings, language),
+    )
+
+
 def _config_text(language: str) -> str:
     return f"<b>{text('config_title', language)}</b>\n{text('config_body', language)}"
 
@@ -81,3 +100,5 @@ async def handle_config_callback(query: Any, context: ContextTypes.DEFAULT_TYPE)
         await _toggle_notification_config(query, context)
     elif query.data.startswith("config:language:"):
         await _set_config_language(query, context)
+    elif query.data.startswith("config:team_scope:"):
+        await _set_team_scope(query, context)

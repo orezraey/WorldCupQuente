@@ -19,6 +19,7 @@ from worldcupquente.live_monitor import (
     SEEN_GOAL_IDS_KEY,
     SEEN_HALFTIME_IDS_KEY,
     SEEN_PENALTY_IDS_KEY,
+    SEEN_PRE_GAME_IDS_KEY,
     SEEN_RED_CARD_IDS_KEY,
     start_live_monitor,
     stop_live_monitor,
@@ -61,6 +62,7 @@ def build_application() -> Application:
     application.bot_data[SEEN_GOAL_IDS_KEY] = set()
     application.bot_data[SEEN_PENALTY_IDS_KEY] = set()
     application.bot_data[SEEN_RED_CARD_IDS_KEY] = set()
+    application.bot_data[SEEN_PRE_GAME_IDS_KEY] = set()
     application.bot_data[SEEN_HALFTIME_IDS_KEY] = set()
     application.bot_data[SEEN_FULL_TIME_IDS_KEY] = set()
     application.bot_data[LIVE_SCORE_SNAPSHOTS_KEY] = {}

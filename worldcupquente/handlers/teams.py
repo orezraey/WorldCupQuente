@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from worldcupquente.formatters import format_team_roster, split_telegram_message
 from worldcupquente.handlers.utils import (
     _get_chat_language,
+    _get_notification_preferences,
     _get_query_language,
     _get_service,
     _log_command,
@@ -22,6 +23,7 @@ from worldcupquente.keyboards import (
     build_back_to_teams_keyboard,
     build_teams_keyboard,
 )
+from worldcupquente.notification_preferences import TEAM_SCOPE_FOLLOWED
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +86,52 @@ async def _send_team_roster(query: Any, context: ContextTypes.DEFAULT_TYPE, data
     await query.edit_message_text(
         chunks[0],
         parse_mode=ParseMode.HTML,
-        reply_markup=build_back_to_teams_keyboard(page, language),
+        reply_markup=_build_team_roster_keyboard(query, context, team_id, page, language),
     )
     if query.message is None:
         return
     for chunk in chunks[1:]:
         await query.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+
+async def _toggle_team_notifications(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if query.message is None:
+        return
+    parts = data.split(":")
+    language = _get_query_language(query, context)
+    if len(parts) < 3 or not parts[2]:
+        await query.edit_message_text(text("invalid_team", language))
+        return
+
+    team_id = parts[2]
+    page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    preferences = _get_notification_preferences(context)
+    preferences.toggle_followed_team(query.message.chat_id, team_id)
+    await query.edit_message_reply_markup(
+        reply_markup=_build_team_roster_keyboard(query, context, team_id, page, language)
+    )
+
+
+def _build_team_roster_keyboard(
+    query: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    team_id: str,
+    page: int,
+    language: str,
+) -> Any:
+    chat_id = getattr(getattr(query, "message", None), "chat_id", None)
+    if chat_id is None:
+        return build_back_to_teams_keyboard(page, language)
+
+    preferences = _get_notification_preferences(context)
+    show_notifications_button = preferences.get_team_scope(chat_id) == TEAM_SCOPE_FOLLOWED
+    return build_back_to_teams_keyboard(
+        page,
+        language,
+        team_id=team_id,
+        show_notifications_button=show_notifications_button,
+        is_following=preferences.is_following_team(chat_id, team_id),
+    )
 
 
 def _parse_page(data: str) -> int:
@@ -100,7 +142,9 @@ def _parse_page(data: str) -> int:
 
 
 async def handle_teams_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if query.data.startswith("teams:"):
+    if query.data.startswith("team:notify:"):
+        await _toggle_team_notifications(query, context, query.data)
+    elif query.data.startswith("teams:"):
         await _send_teams_page(
             query.edit_message_text,
             context,
