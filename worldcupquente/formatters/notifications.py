@@ -57,7 +57,7 @@ def format_full_time_notification_rich(
 
 
 def _rich_paragraph(lines: list[str]) -> str:
-    return f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
+    return f"<p>{'<br/>'.join(line for line in lines if line is not None)}</p>"
 
 
 def format_goal_notification(

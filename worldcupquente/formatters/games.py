@@ -69,7 +69,7 @@ def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo, language:
 
         # In order to avoid circular dependency, we inline the rich paragraph logic here
         lines = _format_live_event(event, tz, show_stats=False, language=language)
-        paragraph = f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
+        paragraph = f"<p>{'<br/>'.join(line for line in lines if line is not None)}</p>"
         blocks.append(paragraph)
 
         stats_table = _format_live_team_stats_table(event, home, away, language)

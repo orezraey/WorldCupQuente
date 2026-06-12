@@ -158,3 +158,59 @@ def test_today_games_defaults_to_english_and_supports_portuguese():
         format_today_games(scoreboard, ZoneInfo("UTC"), "pt")
         == "Nenhum jogo da Copa do Mundo encontrado para hoje."
     )
+
+
+def test_live_games_formatting_includes_blank_line_before_goals():
+    from worldcupquente.formatters import format_live_games, format_live_games_rich
+
+    event = {
+        "date": "2026-06-12T19:00:00Z",
+        "status": {
+            "type": {
+                "state": "in",
+                "shortDetail": "First Half",
+                "detail": "First Half",
+            },
+            "displayClock": "22'",
+        },
+        "competitions": [
+            {
+                "status": {
+                    "type": {
+                        "state": "in",
+                        "shortDetail": "First Half",
+                        "detail": "First Half",
+                    },
+                    "displayClock": "22'",
+                },
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "can", "name": "Canada", "abbreviation": "CAN"},
+                        "score": "0"
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "bih", "name": "Bosnia", "abbreviation": "BIH"},
+                        "score": "1"
+                    }
+                ],
+                "venue": {"fullName": "BMO Field"},
+            }
+        ],
+        "scoringPlays": [
+            {
+                "athletesInvolved": [{"displayName": "Jovo Lukic"}],
+                "clock": {"displayValue": "21'"},
+            }
+        ]
+    }
+
+    # Verify plain text/HTML output (format_live_games)
+    plain_output = format_live_games([event], ZoneInfo("UTC"), language="pt")
+    assert "🏟 Estádio: BMO Field\n\n⚽️ Jovo Lukic 21&#x27;" in plain_output
+
+    # Verify rich HTML output (format_live_games_rich)
+    rich_output = format_live_games_rich([event], ZoneInfo("UTC"), language="pt")
+    assert "🏟 Estádio: BMO Field<br/><br/>⚽️ Jovo Lukic 21&#x27;" in rich_output
+
