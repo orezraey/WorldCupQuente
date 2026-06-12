@@ -14,19 +14,24 @@ from telegram.ext import Application
 
 from worldcupquente.config import get_settings
 from worldcupquente.formatters import (
+    format_full_time_notification_rich,
     format_goal_notification,
+    format_match_status_notification,
     format_penalty_notification,
     format_red_card_notification,
 )
 from worldcupquente.handlers import get_handlers
 from worldcupquente.notification_preferences import (
+    FULL_TIME_NOTIFICATION,
     GOAL_NOTIFICATION,
+    HALFTIME_NOTIFICATION,
     PENALTY_NOTIFICATION,
     RED_CARD_NOTIFICATION,
     NotificationPreferences,
 )
 from worldcupquente.services import (
     WorldCupService,
+    event_from_summary,
     penalty_plays_from_event,
     red_cards_from_event,
     scoring_plays_from_event,
@@ -37,6 +42,8 @@ logger = logging.getLogger(__name__)
 SEEN_GOAL_IDS_KEY = "live_seen_goal_ids"
 SEEN_PENALTY_IDS_KEY = "live_seen_penalty_ids"
 SEEN_RED_CARD_IDS_KEY = "live_seen_red_card_ids"
+SEEN_HALFTIME_IDS_KEY = "live_seen_halftime_ids"
+SEEN_FULL_TIME_IDS_KEY = "live_seen_full_time_ids"
 LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
 LIVE_MONITOR_TASK_KEY = "live_monitor_task"
 NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
@@ -63,6 +70,8 @@ def build_application() -> Application:
     application.bot_data[SEEN_GOAL_IDS_KEY] = set()
     application.bot_data[SEEN_PENALTY_IDS_KEY] = set()
     application.bot_data[SEEN_RED_CARD_IDS_KEY] = set()
+    application.bot_data[SEEN_HALFTIME_IDS_KEY] = set()
+    application.bot_data[SEEN_FULL_TIME_IDS_KEY] = set()
     application.bot_data[LIVE_SCORE_SNAPSHOTS_KEY] = {}
     application.bot_data["live_is_bootstrapped"] = False
     for handler in get_handlers():
@@ -123,15 +132,24 @@ async def poll_live_notifications(application: Application) -> None:
         logger.exception("Failed to poll live games for notifications")
         return
 
+    try:
+        status_events = (await service.get_active_scoreboard(use_cache=False)).get("events", [])
+    except Exception:
+        logger.exception("Failed to poll game status for notifications")
+        status_events = []
+
     seen_goal_ids: set[str] = application.bot_data.setdefault(SEEN_GOAL_IDS_KEY, set())
     seen_penalty_ids: set[str] = application.bot_data.setdefault(SEEN_PENALTY_IDS_KEY, set())
     seen_red_card_ids: set[str] = application.bot_data.setdefault(SEEN_RED_CARD_IDS_KEY, set())
+    seen_halftime_ids: set[str] = application.bot_data.setdefault(SEEN_HALFTIME_IDS_KEY, set())
+    seen_full_time_ids: set[str] = application.bot_data.setdefault(SEEN_FULL_TIME_IDS_KEY, set())
     score_snapshots: dict[str, tuple[int, ...]] = application.bot_data.setdefault(
         LIVE_SCORE_SNAPSHOTS_KEY,
         {},
     )
     is_bootstrapped = application.bot_data.get("live_is_bootstrapped", False)
     notifications: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    status_notifications: list[tuple[str, dict[str, Any]]] = []
     scored_penalty_goal_keys: set[tuple[str, str, str, str]] = set()
 
     for event in live_events:
@@ -174,6 +192,23 @@ async def poll_live_notifications(application: Application) -> None:
             if is_bootstrapped:
                 notifications.append((RED_CARD_NOTIFICATION, event, detail))
 
+    for event in status_events:
+        event_id = str(event.get("id", ""))
+        if not event_id:
+            continue
+        if _is_halftime_event(event) and event_id not in seen_halftime_ids:
+            seen_halftime_ids.add(event_id)
+            if is_bootstrapped:
+                status_notifications.append(
+                    (HALFTIME_NOTIFICATION, await _hydrate_notification_event(service, event))
+                )
+        if _is_full_time_event(event) and event_id not in seen_full_time_ids:
+            seen_full_time_ids.add(event_id)
+            if is_bootstrapped:
+                status_notifications.append(
+                    (FULL_TIME_NOTIFICATION, await _hydrate_notification_event(service, event))
+                )
+
     if not is_bootstrapped:
         application.bot_data["live_is_bootstrapped"] = True
 
@@ -202,6 +237,56 @@ async def poll_live_notifications(application: Application) -> None:
                     extra={"chat_id": chat_id, "notification_type": notification_type},
                 )
 
+    for notification_type, event in status_notifications:
+        chat_ids = preferences.enabled_chat_ids(
+            notification_type,
+            service.settings.live_notification_chat_ids,
+        )
+        full_time_html = None
+        halftime_text = None
+        if notification_type == FULL_TIME_NOTIFICATION:
+            group = await _standings_group_for_event(service, event)
+            full_time_html = format_full_time_notification_rich(event, service.bot_timezone, group)
+        else:
+            halftime_text = format_match_status_notification(event, service.bot_timezone)
+
+        for chat_id in chat_ids:
+            try:
+                if notification_type == FULL_TIME_NOTIFICATION:
+                    try:
+                        await application.bot.do_api_request(
+                            "sendRichMessage",
+                            api_kwargs={
+                                "chat_id": chat_id,
+                                "rich_message": {
+                                    "html": full_time_html,
+                                    "skip_entity_detection": True,
+                                },
+                            },
+                        )
+                    except Exception:
+                        logger.exception("Failed to send rich full-time notification")
+                        await application.bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"{format_match_status_notification(event, service.bot_timezone)}\n\n"
+                                "Tabela do grupo disponível em /tabela."
+                            ),
+                            parse_mode=ParseMode.HTML,
+                        )
+                    continue
+
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text=halftime_text,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send game status notification",
+                    extra={"chat_id": chat_id, "notification_type": notification_type},
+                )
+
 
 def _format_live_notification(
     notification_type: str,
@@ -215,6 +300,87 @@ def _format_live_notification(
     if notification_type == RED_CARD_NOTIFICATION:
         return format_red_card_notification(event, detail)
     raise ValueError(f"Invalid notification type: {notification_type}")
+
+
+async def _hydrate_notification_event(
+    service: WorldCupService,
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    event_id = str(event.get("id", ""))
+    if not event_id:
+        return event
+    try:
+        summary = await service.get_event_summary(event_id)
+    except Exception:
+        logger.warning("Failed to hydrate notification event", extra={"event_id": event_id})
+        return event
+    return event_from_summary(summary, fallback_event=event)
+
+
+async def _standings_group_for_event(
+    service: WorldCupService,
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    team_ids = _event_team_ids(event)
+    if not team_ids:
+        return None
+    try:
+        groups = await service.get_standings_groups(use_cache=False)
+    except Exception:
+        logger.warning("Failed to fetch standings for full-time notification")
+        return None
+
+    for group in groups:
+        group_team_ids = {
+            str(((entry.get("team") or {}).get("id")) or "")
+            for entry in (group.get("standings") or {}).get("entries", [])
+        }
+        if team_ids.issubset(group_team_ids):
+            return group
+    return None
+
+
+def _event_team_ids(event: dict[str, Any]) -> set[str]:
+    competition = (event.get("competitions") or [{}])[0]
+    return {
+        str(((competitor.get("team") or {}).get("id")) or "")
+        for competitor in competition.get("competitors", [])
+        if ((competitor.get("team") or {}).get("id"))
+    }
+
+
+def _is_halftime_event(event: dict[str, Any]) -> bool:
+    status = _event_status(event)
+    status_type = status.get("type") or {}
+    if status_type.get("state") != "in":
+        return False
+    return any(part == "HT" or "HALFTIME" in part.upper() for part in _status_text_parts(status))
+
+
+def _is_full_time_event(event: dict[str, Any]) -> bool:
+    status = _event_status(event)
+    status_type = status.get("type") or {}
+    return status_type.get("state") == "post" or status_type.get("completed") is True
+
+
+def _event_status(event: dict[str, Any]) -> dict[str, Any]:
+    competition = (event.get("competitions") or [{}])[0]
+    return competition.get("status") or event.get("status") or {}
+
+
+def _status_text_parts(status: dict[str, Any]) -> set[str]:
+    status_type = status.get("type") or {}
+    return {
+        str(part)
+        for part in [
+            status.get("displayClock"),
+            status_type.get("name"),
+            status_type.get("description"),
+            status_type.get("detail"),
+            status_type.get("shortDetail"),
+        ]
+        if part
+    }
 
 
 def _goal_id(event: dict[str, Any], detail: dict[str, Any]) -> str:

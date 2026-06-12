@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "start")
+    _log_command(update, context, "start")
     message = update.effective_message
     if message is None:
         return
@@ -61,7 +61,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "hoje")
+    _log_command(update, context, "hoje")
     message = update.effective_message
     if message is None:
         return
@@ -77,7 +77,7 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "aovivo")
+    _log_command(update, context, "aovivo")
     message = update.effective_message
     if message is None:
         return
@@ -99,7 +99,7 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def teams_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "selecoes")
+    _log_command(update, context, "selecoes")
     message = update.effective_message
     if message is None:
         return
@@ -107,7 +107,7 @@ async def teams_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "calendario")
+    _log_command(update, context, "calendario")
     message = update.effective_message
     if message is None:
         return
@@ -115,7 +115,7 @@ async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "tabela")
+    _log_command(update, context, "tabela")
     message = update.effective_message
     if message is None:
         return
@@ -123,7 +123,7 @@ async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _log_command(update, "config")
+    _log_command(update, context, "config")
     message = update.effective_message
     chat = update.effective_chat
     if message is None or chat is None:
@@ -192,7 +192,7 @@ def get_handlers() -> list[Any]:
     ]
 
 
-def _log_command(update: Update, command: str) -> None:
+def _log_command(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str) -> None:
     logger.info(
         "Command received",
         extra={

@@ -12,14 +12,26 @@ from worldcupquente.config import ChatId
 logger = logging.getLogger(__name__)
 
 GOAL_NOTIFICATION = "goal"
+HALFTIME_NOTIFICATION = "halftime"
+FULL_TIME_NOTIFICATION = "full_time"
 PENALTY_NOTIFICATION = "penalty"
 RED_CARD_NOTIFICATION = "red_card"
 
-NOTIFICATION_TYPES = (GOAL_NOTIFICATION, PENALTY_NOTIFICATION, RED_CARD_NOTIFICATION)
+NOTIFICATION_TYPES = (
+    GOAL_NOTIFICATION,
+    PENALTY_NOTIFICATION,
+    RED_CARD_NOTIFICATION,
+    HALFTIME_NOTIFICATION,
+    FULL_TIME_NOTIFICATION,
+)
+LEGACY_NOTIFICATION_TYPES = (GOAL_NOTIFICATION, PENALTY_NOTIFICATION, RED_CARD_NOTIFICATION)
+STATUS_NOTIFICATION_TYPES = (HALFTIME_NOTIFICATION, FULL_TIME_NOTIFICATION)
 NOTIFICATION_LABELS = {
     GOAL_NOTIFICATION: "Gol",
     PENALTY_NOTIFICATION: "Pênalti",
     RED_CARD_NOTIFICATION: "Cartão vermelho",
+    HALFTIME_NOTIFICATION: "Intervalo",
+    FULL_TIME_NOTIFICATION: "Fim de jogo",
 }
 DEFAULT_NOTIFICATION_SETTINGS = dict.fromkeys(NOTIFICATION_TYPES, True)
 
@@ -98,9 +110,22 @@ class NotificationPreferences:
     @staticmethod
     def _validated_settings(settings: dict[str, Any]) -> dict[str, bool]:
         return {
-            notification_type: bool(settings.get(notification_type, True))
+            notification_type: bool(
+                settings.get(
+                    notification_type,
+                    NotificationPreferences._missing_notification_default(settings, notification_type),
+                )
+            )
             for notification_type in NOTIFICATION_TYPES
         }
+
+    @staticmethod
+    def _missing_notification_default(settings: dict[str, Any], notification_type: str) -> bool:
+        if notification_type not in STATUS_NOTIFICATION_TYPES:
+            return True
+
+        legacy_values = [bool(settings[item]) for item in LEGACY_NOTIFICATION_TYPES if item in settings]
+        return not (legacy_values and not any(legacy_values))
 
     @staticmethod
     def _chat_key(chat_id: ChatId) -> str:

@@ -10,7 +10,7 @@ Bot Telegram para acompanhar a Copa do Mundo 2026 usando endpoints públicos da 
 - `/calendario` - calendário por datas ou seleções
 - `/tabela` - classificação da fase de grupos em tabela rich do Telegram
 - `/selecoes` - lista seleções e permite abrir o elenco geral
-- `/config` - configura notificações de gol, pênalti e cartão vermelho no chat atual
+- `/config` - configura notificações de gol, pênalti, cartão vermelho, intervalo e fim de jogo no chat atual
 
 ## Configuração
 

@@ -60,8 +60,17 @@ class WorldCupService:
     async def get_today_games(self, use_cache: bool = True) -> dict[str, Any]:
         return await self.get_games_by_date(self.today_date_param(), use_cache=use_cache)
 
+    def date_param_for_offset(self, days: int) -> str:
+        return (datetime.now(tz=self.bot_timezone) + timedelta(days=days)).strftime("%Y%m%d")
+
+    async def get_active_scoreboard(self, use_cache: bool = True) -> dict[str, Any]:
+        yesterday = self.date_param_for_offset(-1)
+        tomorrow = self.date_param_for_offset(1)
+        date_range = f"{yesterday}-{tomorrow}"
+        return await self.get_games_by_date(date_range, use_cache=use_cache)
+
     async def get_live_events(self, use_cache: bool = True) -> list[dict[str, Any]]:
-        scoreboard = await self.get_today_games(use_cache=use_cache)
+        scoreboard = await self.get_active_scoreboard(use_cache=use_cache)
         live_events = live_events_from_scoreboard(scoreboard)
         return await self._hydrate_live_events(live_events)
 
@@ -139,21 +148,22 @@ class WorldCupService:
         self.cache.set(cache_key, data, ROSTER_CACHE_SECONDS)
         return data
 
-    async def get_standings(self) -> dict[str, Any]:
-        cached = self.cache.get("standings")
+    async def get_standings(self, use_cache: bool = True) -> dict[str, Any]:
+        cached = self.cache.get("standings") if use_cache else None
         if cached is not None:
             return cached
 
         data = await self.client.get_standings(WORLD_CUP_SPORT, WORLD_CUP_LEAGUE, WORLD_CUP_SEASON)
-        self.cache.set("standings", data, STANDINGS_CACHE_SECONDS)
+        if use_cache:
+            self.cache.set("standings", data, STANDINGS_CACHE_SECONDS)
         return data
 
-    async def get_standings_groups(self) -> list[dict[str, Any]]:
-        standings = await self.get_standings()
+    async def get_standings_groups(self, use_cache: bool = True) -> list[dict[str, Any]]:
+        standings = await self.get_standings(use_cache=use_cache)
         return standings.get("children", [])
 
-    async def get_standings_group(self, group_id: str) -> dict[str, Any] | None:
-        groups = await self.get_standings_groups()
+    async def get_standings_group(self, group_id: str, use_cache: bool = True) -> dict[str, Any] | None:
+        groups = await self.get_standings_groups(use_cache=use_cache)
         return next((group for group in groups if str(group.get("id", "")) == str(group_id)), None)
 
 

@@ -105,6 +105,21 @@ def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
     return "".join(blocks)
 
 
+def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo) -> str:
+    return "\n".join(_format_live_event(event, tz, show_stats=False))
+
+
+def format_full_time_notification_rich(
+    event: dict[str, Any],
+    tz: ZoneInfo,
+    group: dict[str, Any] | None,
+) -> str:
+    blocks = [_rich_paragraph(_format_live_event(event, tz, show_stats=False))]
+    if group is not None:
+        blocks.append(format_standings_group_table(group))
+    return "".join(blocks)
+
+
 def _rich_paragraph(lines: list[str]) -> str:
     return f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
 
@@ -112,7 +127,6 @@ def _rich_paragraph(lines: list[str]) -> str:
 def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
     competition = (event.get("competitions") or [{}])[0]
     competitors = competition.get("competitors", [])
-    team = _find_team_by_id(competitors, str((detail.get("team") or {}).get("id", "")))
     athletes = detail.get("athletesInvolved") or [
         participant.get("athlete") or {}
         for participant in detail.get("participants", [])
@@ -121,20 +135,17 @@ def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> s
     athlete = (athletes or [{}])[0]
     scorer = athlete.get("displayName") or athlete.get("fullName") or "Autor indisponível"
     minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
-    goal_type = str((detail.get("type") or {}).get("text") or "Goal")
-    goal_note = " contra" if detail.get("ownGoal") else ""
 
     home = _find_competitor(competitors, "home")
     away = _find_competitor(competitors, "away")
     status = competition.get("status") or event.get("status") or {}
     state = (status.get("type") or {}).get("state", "in")
 
+    header = "⚽️ <b>GOL CONTRA!</b>" if detail.get("ownGoal") else "⚽️ <b>GOL!</b>"
+
     lines = [
-        "<b>Gol na Copa do Mundo!</b>",
-        f"Minuto: <b>{escape(str(minute))}</b>",
-        f"Autor: <b>{escape(str(scorer))}</b>",
-        f"Seleção: <b>{translated_team_name_html(team)}</b>",
-        f"Tipo: {escape(_translated_goal_type(goal_type))}{escape(goal_note)}",
+        header,
+        f"👤 {escape(str(scorer))} ({escape(str(minute))})",
         "",
         _format_matchup(home, away, str(state)),
     ]
@@ -502,7 +513,7 @@ def _format_live_team_stats_table(
         "<table bordered striped>",
         "<tr>"
         f"<th>{home_name or 'Casa'}</th>"
-        f"<th>{LIVE_STATS_TITLE_EMOJI} Estatística</th>"
+        f"<th>{LIVE_STATS_TITLE_EMOJI} Estatísticas</th>"
         f"<th>{away_name or 'Visitante'}</th>"
         "</tr>",
     ]
