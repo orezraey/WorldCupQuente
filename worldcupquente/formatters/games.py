@@ -116,7 +116,7 @@ def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
     venue_name = venue.get("fullName") or venue.get("displayName")
 
     lines = [
-        f"<b>Com início às {escape(time_text)}</b>",
+        f"<b>🕒 {escape(time_text)}</b>",
         f"⚽️ {matchup}",
     ]
     if venue_name:
@@ -168,9 +168,7 @@ def _format_live_event(event: dict[str, Any], tz: ZoneInfo, show_stats: bool = F
         status_source = status_type.get("shortDetail") or status_type.get("detail") or "Ao vivo"
         if display_clock and status_source == display_clock:
             status_source = status_type.get("description") or status_source
-        status_text = _translated_status(
-            status_source
-        )
+        status_text = _translated_status(status_source)
 
     event_time = parse_espn_datetime(event.get("date", ""), tz)
     time_text = event_time.strftime("%d/%m %H:%M") if event_time else "Horário indefinido"
@@ -349,10 +347,26 @@ def _live_team_stat_rows(
             _format_percent_value(_stat_value(home_stats, "possessionPct")),
             _format_percent_value(_stat_value(away_stats, "possessionPct")),
         ),
-        ("Finalizações", _stat_value(home_stats, "totalShots"), _stat_value(away_stats, "totalShots")),
-        ("No alvo", _stat_value(home_stats, "shotsOnTarget"), _stat_value(away_stats, "shotsOnTarget")),
-        ("Escanteios", _stat_value(home_stats, "wonCorners"), _stat_value(away_stats, "wonCorners")),
-        ("Faltas", _stat_value(home_stats, "foulsCommitted"), _stat_value(away_stats, "foulsCommitted")),
+        (
+            "Finalizações",
+            _stat_value(home_stats, "totalShots"),
+            _stat_value(away_stats, "totalShots"),
+        ),
+        (
+            "No alvo",
+            _stat_value(home_stats, "shotsOnTarget"),
+            _stat_value(away_stats, "shotsOnTarget"),
+        ),
+        (
+            "Escanteios",
+            _stat_value(home_stats, "wonCorners"),
+            _stat_value(away_stats, "wonCorners"),
+        ),
+        (
+            "Faltas",
+            _stat_value(home_stats, "foulsCommitted"),
+            _stat_value(away_stats, "foulsCommitted"),
+        ),
         (
             "Passes",
             _made_total_value(home_stats, "accuratePasses", "totalPasses"),
@@ -498,7 +512,9 @@ def _format_live_leaders(event: dict[str, Any]) -> list[str]:
             continue
         team, athlete, value = leader
         team_name = translated_team_name_html(team, include_emoji=False)
-        athlete_name = escape(str(athlete.get("displayName") or athlete.get("fullName") or "Jogador"))
+        athlete_name = escape(
+            str(athlete.get("displayName") or athlete.get("fullName") or "Jogador")
+        )
         lines.append(f"{escape(label)}: {athlete_name} ({team_name}) - {escape(value)}")
     if not lines:
         return []
@@ -517,7 +533,9 @@ def _best_leader(
                 continue
             for leader in stat_group.get("leaders", []):
                 athlete = leader.get("athlete") or {}
-                display_value = str(leader.get("displayValue") or _leader_stat_value(leader, stat_name))
+                display_value = str(
+                    leader.get("displayValue") or _leader_stat_value(leader, stat_name)
+                )
                 value = _numeric_value(display_value)
                 candidates.append((value, team, athlete, display_value))
     if not candidates:

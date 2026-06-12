@@ -28,6 +28,28 @@ from worldcupquente.services import WorldCupService
 logger = logging.getLogger(__name__)
 
 
+async def post_init(application: Application) -> None:
+    """Register bot commands for autocomplete and start live monitor."""
+    from telegram import BotCommand
+
+    commands = [
+        BotCommand("start", "Iniciar o bot e ver comandos"),
+        BotCommand("hoje", "Jogos de hoje"),
+        BotCommand("aovivo", "Partidas ao vivo"),
+        BotCommand("calendario", "Calendário de jogos por data ou seleção"),
+        BotCommand("tabela", "Classificação por grupo"),
+        BotCommand("selecoes", "Lista de seleções e elencos"),
+        BotCommand("config", "Configurar notificações ao vivo"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        logger.info("Bot commands registered successfully with Telegram")
+    except Exception:
+        logger.exception("Failed to set Telegram commands")
+
+    await start_live_monitor(application)
+
+
 def build_application() -> Application:
     settings = get_settings()
     if not settings.telegram_bot_token:
@@ -39,7 +61,7 @@ def build_application() -> Application:
     )
 
     builder = Application.builder().token(settings.telegram_bot_token)
-    builder = builder.post_init(start_live_monitor).post_shutdown(stop_live_monitor)
+    builder = builder.post_init(post_init).post_shutdown(stop_live_monitor)
 
     application = builder.build()
     application.bot_data["world_cup_service"] = WorldCupService(settings)
