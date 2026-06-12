@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from worldcupquente.config import ChatId
+from worldcupquente.i18n import DEFAULT_LANGUAGE, normalize_language
 
 logger = logging.getLogger(__name__)
 
@@ -26,35 +27,41 @@ NOTIFICATION_TYPES = (
 )
 LEGACY_NOTIFICATION_TYPES = (GOAL_NOTIFICATION, PENALTY_NOTIFICATION, RED_CARD_NOTIFICATION)
 STATUS_NOTIFICATION_TYPES = (HALFTIME_NOTIFICATION, FULL_TIME_NOTIFICATION)
-NOTIFICATION_LABELS = {
-    GOAL_NOTIFICATION: "Gol",
-    PENALTY_NOTIFICATION: "Pênalti",
-    RED_CARD_NOTIFICATION: "Cartão vermelho",
-    HALFTIME_NOTIFICATION: "Intervalo",
-    FULL_TIME_NOTIFICATION: "Fim de jogo",
-}
 DEFAULT_NOTIFICATION_SETTINGS = dict.fromkeys(NOTIFICATION_TYPES, True)
+LANGUAGE_KEY = "language"
+LEGACY_DEFAULT_LANGUAGE = "pt"
 
 
 class NotificationPreferences:
     def __init__(self, path: Path):
         self.path = path
-        self._items: dict[str, dict[str, bool]] = {}
+        self._items: dict[str, dict[str, Any]] = {}
         self._load()
 
-    def ensure_chat(self, chat_id: ChatId) -> dict[str, bool]:
+    def ensure_chat(self, chat_id: ChatId) -> dict[str, Any]:
         key = self._chat_key(chat_id)
         if key not in self._items:
-            self._items[key] = DEFAULT_NOTIFICATION_SETTINGS.copy()
+            self._items[key] = self._default_settings()
             self.save()
         return self.get(chat_id)
 
-    def get(self, chat_id: ChatId) -> dict[str, bool]:
-        settings = DEFAULT_NOTIFICATION_SETTINGS.copy()
+    def get(self, chat_id: ChatId) -> dict[str, Any]:
+        settings = self._default_settings()
         settings.update(self._items.get(self._chat_key(chat_id), {}))
         return settings
 
-    def toggle(self, chat_id: ChatId, notification_type: str) -> dict[str, bool]:
+    def get_language(self, chat_id: ChatId) -> str:
+        return normalize_language(str(self.get(chat_id).get(LANGUAGE_KEY, DEFAULT_LANGUAGE)))
+
+    def set_language(self, chat_id: ChatId, language: str) -> dict[str, Any]:
+        key = self._chat_key(chat_id)
+        current = self._items.get(key, {}).copy()
+        current[LANGUAGE_KEY] = normalize_language(language)
+        self._items[key] = current
+        self.save()
+        return self.get(chat_id)
+
+    def toggle(self, chat_id: ChatId, notification_type: str) -> dict[str, Any]:
         if notification_type not in NOTIFICATION_TYPES:
             raise ValueError(f"Invalid notification type: {notification_type}")
         current = self.ensure_chat(chat_id)
@@ -76,10 +83,14 @@ class NotificationPreferences:
         return enabled
 
     def has_recipients(self, static_chat_ids: tuple[ChatId, ...]) -> bool:
-        return bool(static_chat_ids or self._items)
+        return bool(static_chat_ids or self.configured_chat_ids())
 
     def configured_chat_ids(self) -> list[ChatId]:
-        return [self._parse_chat_key(chat_id) for chat_id in self._items]
+        return [
+            self._parse_chat_key(chat_id)
+            for chat_id, settings in self._items.items()
+            if self._has_notification_settings(settings)
+        ]
 
     def save(self) -> None:
         try:
@@ -108,16 +119,34 @@ class NotificationPreferences:
         }
 
     @staticmethod
-    def _validated_settings(settings: dict[str, Any]) -> dict[str, bool]:
-        return {
-            notification_type: bool(
-                settings.get(
-                    notification_type,
-                    NotificationPreferences._missing_notification_default(settings, notification_type),
-                )
+    def _validated_settings(settings: dict[str, Any]) -> dict[str, Any]:
+        has_notification_settings = NotificationPreferences._has_notification_settings(settings)
+        validated: dict[str, Any] = {}
+        if has_notification_settings:
+            validated.update(
+                {
+                    notification_type: bool(
+                        settings.get(
+                            notification_type,
+                            NotificationPreferences._missing_notification_default(
+                                settings, notification_type
+                            ),
+                        )
+                    )
+                    for notification_type in NOTIFICATION_TYPES
+                }
             )
-            for notification_type in NOTIFICATION_TYPES
-        }
+        default_language = LEGACY_DEFAULT_LANGUAGE if has_notification_settings else DEFAULT_LANGUAGE
+        validated[LANGUAGE_KEY] = normalize_language(str(settings.get(LANGUAGE_KEY, default_language)))
+        return validated
+
+    @staticmethod
+    def _has_notification_settings(settings: dict[str, Any]) -> bool:
+        return any(notification_type in settings for notification_type in NOTIFICATION_TYPES)
+
+    @staticmethod
+    def _default_settings() -> dict[str, Any]:
+        return {**DEFAULT_NOTIFICATION_SETTINGS, LANGUAGE_KEY: DEFAULT_LANGUAGE}
 
     @staticmethod
     def _missing_notification_default(settings: dict[str, Any], notification_type: str) -> bool:

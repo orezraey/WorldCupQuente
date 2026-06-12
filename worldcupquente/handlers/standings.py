@@ -10,7 +10,13 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from worldcupquente.formatters import format_standings_group_table
-from worldcupquente.handlers.utils import _get_service, _log_command
+from worldcupquente.handlers.utils import (
+    _get_chat_language,
+    _get_query_language,
+    _get_service,
+    _log_command,
+)
+from worldcupquente.i18n import text
 from worldcupquente.keyboards import (
     build_standings_back_keyboard,
     build_standings_groups_keyboard,
@@ -24,37 +30,44 @@ async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     message = update.effective_message
     if message is None:
         return
-    await _send_standings_menu(message.reply_text, context)
+    await _send_standings_menu(message.reply_text, context, _get_chat_language(update, context))
 
 
-async def _send_standings_menu(send_message: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _send_standings_menu(
+    send_message: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    language: str,
+) -> None:
     service = _get_service(context)
     try:
         groups = await service.get_standings_groups()
     except Exception:
         logger.exception("Failed to fetch standings groups")
-        await send_message("Não consegui buscar os grupos da tabela agora.")
+        await send_message(text("standings_groups_error", language))
         return
 
     if not groups:
-        await send_message("Nenhum grupo encontrado na tabela da Copa agora.")
+        await send_message(text("standings_groups_empty", language))
         return
 
-    text = "<b>Tabela da Copa 2026</b>\nEscolha um grupo para ver a classificação."
+    message_text = f"<b>{text('standings_title', language)}</b>\n{text('standings_body', language)}"
     await send_message(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_standings_groups_keyboard(groups),
+        reply_markup=build_standings_groups_keyboard(groups, language),
     )
 
 
 async def _send_standings_group(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     if query.message is None:
         return
+    language = _get_query_language(query, context)
 
     parts = data.split(":")
     if len(parts) < 3 or not parts[2]:
-        await query.edit_message_text("Grupo inválido.", reply_markup=build_standings_back_keyboard())
+        await query.edit_message_text(
+            text("invalid_group", language), reply_markup=build_standings_back_keyboard(language)
+        )
         return
 
     group_id = parts[2]
@@ -64,13 +77,16 @@ async def _send_standings_group(query: Any, context: ContextTypes.DEFAULT_TYPE, 
     except Exception:
         logger.exception("Failed to fetch standings group", extra={"group_id": group_id})
         await query.edit_message_text(
-            "Não consegui buscar a tabela deste grupo agora.",
-            reply_markup=build_standings_back_keyboard(),
+            text("standings_group_error", language),
+            reply_markup=build_standings_back_keyboard(language),
         )
         return
 
     if group is None:
-        await query.edit_message_text("Grupo não encontrado.", reply_markup=build_standings_back_keyboard())
+        await query.edit_message_text(
+            text("standings_group_not_found", language),
+            reply_markup=build_standings_back_keyboard(language),
+        )
         return
 
     await context.bot.do_api_request(
@@ -79,16 +95,16 @@ async def _send_standings_group(query: Any, context: ContextTypes.DEFAULT_TYPE, 
             "chat_id": query.message.chat_id,
             "message_id": query.message.message_id,
             "rich_message": {
-                "html": format_standings_group_table(group),
+                "html": format_standings_group_table(group, language),
                 "skip_entity_detection": True,
             },
-            "reply_markup": build_standings_back_keyboard(),
+            "reply_markup": build_standings_back_keyboard(language),
         },
     )
 
 
 async def handle_standings_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.data == "table:menu":
-        await _send_standings_menu(query.edit_message_text, context)
+        await _send_standings_menu(query.edit_message_text, context, _get_query_language(query, context))
     elif query.data.startswith("table:group:"):
         await _send_standings_group(query, context, query.data)

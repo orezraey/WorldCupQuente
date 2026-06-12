@@ -31,12 +31,12 @@ async def test_post_init_sets_commands_and_starts_monitor(mocker):
 
     assert len(called_commands) == 7
     assert called_commands[0].command == "start"
-    assert called_commands[0].description == "Iniciar o bot e ver comandos"
-    assert called_commands[1].command == "hoje"
-    assert called_commands[2].command == "aovivo"
-    assert called_commands[3].command == "calendario"
-    assert called_commands[4].command == "tabela"
-    assert called_commands[5].command == "selecoes"
+    assert called_commands[0].description == "Start the bot and see commands"
+    assert called_commands[1].command == "today"
+    assert called_commands[2].command == "live"
+    assert called_commands[3].command == "calendar"
+    assert called_commands[4].command == "standings"
+    assert called_commands[5].command == "teams"
     assert called_commands[6].command == "config"
 
     # Assert start_live_monitor was called

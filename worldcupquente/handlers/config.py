@@ -8,7 +8,9 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from worldcupquente.commands import set_chat_commands
 from worldcupquente.handlers.utils import _get_notification_preferences, _log_command
+from worldcupquente.i18n import text
 from worldcupquente.keyboards import build_notification_config_keyboard
 
 
@@ -27,12 +29,12 @@ async def _send_notification_config(
     chat_id: int,
 ) -> None:
     preferences = _get_notification_preferences(context)
-    settings = preferences.ensure_chat(chat_id)
-    text = "<b>Notificações ao vivo</b>\nEscolha quais alertas este chat deve receber."
+    settings = preferences.get(chat_id)
+    language = preferences.get_language(chat_id)
     await send_message(
-        text,
+        _config_text(language),
         parse_mode=ParseMode.HTML,
-        reply_markup=build_notification_config_keyboard(settings),
+        reply_markup=build_notification_config_keyboard(settings, language),
     )
 
 
@@ -44,17 +46,38 @@ async def _toggle_notification_config(query: Any, context: ContextTypes.DEFAULT_
     try:
         settings = preferences.toggle(query.message.chat_id, notification_type)
     except ValueError:
-        await query.edit_message_text("Configuração inválida.")
+        await query.edit_message_text(text("config_invalid", preferences.get_language(query.message.chat_id)))
         return
 
-    text = "<b>Notificações ao vivo</b>\nEscolha quais alertas este chat deve receber."
+    language = preferences.get_language(query.message.chat_id)
     await query.edit_message_text(
-        text,
+        _config_text(language),
         parse_mode=ParseMode.HTML,
-        reply_markup=build_notification_config_keyboard(settings),
+        reply_markup=build_notification_config_keyboard(settings, language),
     )
+
+
+async def _set_config_language(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if query.message is None:
+        return
+    language = query.data.rsplit(":", maxsplit=1)[-1]
+    preferences = _get_notification_preferences(context)
+    settings = preferences.set_language(query.message.chat_id, language)
+    selected_language = preferences.get_language(query.message.chat_id)
+    await set_chat_commands(context.bot, query.message.chat_id, selected_language)
+    await query.edit_message_text(
+        _config_text(selected_language),
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_notification_config_keyboard(settings, selected_language),
+    )
+
+
+def _config_text(language: str) -> str:
+    return f"<b>{text('config_title', language)}</b>\n{text('config_body', language)}"
 
 
 async def handle_config_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.data.startswith("config:toggle:"):
         await _toggle_notification_config(query, context)
+    elif query.data.startswith("config:language:"):
+        await _set_config_language(query, context)

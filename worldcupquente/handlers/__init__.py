@@ -17,11 +17,11 @@ from worldcupquente.handlers.teams import teams_command
 def get_handlers() -> list[Any]:
     return [
         CommandHandler("start", start_command),
-        CommandHandler("hoje", today_command),
-        CommandHandler("aovivo", live_command),
-        CommandHandler("calendario", calendar_command),
-        CommandHandler("tabela", standings_command),
-        CommandHandler("selecoes", teams_command),
+        CommandHandler(["hoje", "today"], today_command),
+        CommandHandler(["aovivo", "live"], live_command),
+        CommandHandler(["calendario", "calendar"], calendar_command),
+        CommandHandler(["tabela", "standings"], standings_command),
+        CommandHandler(["selecoes", "teams"], teams_command),
         CommandHandler("config", config_command),
         CallbackQueryHandler(callback_query_handler),
     ]

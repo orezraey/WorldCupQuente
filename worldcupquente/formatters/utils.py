@@ -5,6 +5,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from worldcupquente.i18n import status_text, text
 from worldcupquente.team_translations import translated_team_name_html
 
 TELEGRAM_MESSAGE_LIMIT = 3900
@@ -14,26 +15,26 @@ LIVE_TITLE_EMOJI = '<tg-emoji emoji-id="5850297493593529930">🏆</tg-emoji>'
 LIVE_STATS_TITLE_EMOJI = '<tg-emoji emoji-id="5296265790654264117">📊</tg-emoji>'
 LIVE_STAT_LEADER_EMOJI = '<tg-emoji emoji-id="5821342125458985363">🔥</tg-emoji>'
 LIVE_STAT_LABEL_EMOJIS = {
-    "Posse": '<tg-emoji emoji-id="4958712589895861234">⚽</tg-emoji>',
-    "Finalizações": '<tg-emoji emoji-id="4958562394889520477">🥅</tg-emoji>',
-    "No alvo": '<tg-emoji emoji-id="5449862290834735715">🎯</tg-emoji>',
-    "Escanteios": '<tg-emoji emoji-id="4958711348650312955">🚩</tg-emoji>',
-    "Faltas": '<tg-emoji emoji-id="4958638587609351070">🦵</tg-emoji>',
-    "Passes": '<tg-emoji emoji-id="4958604885000979612">⚽</tg-emoji>',
-    "Cruzamentos": '<tg-emoji emoji-id="4958910665197618290">📐</tg-emoji>',
-    "Desarmes": '<tg-emoji emoji-id="4958645180384150616">🛡</tg-emoji>',
-    "Defesas": '<tg-emoji emoji-id="4958484449823031980">🧤</tg-emoji>',
-    "Cartões": (
+    "possession": '<tg-emoji emoji-id="4958712589895861234">⚽</tg-emoji>',
+    "shots": '<tg-emoji emoji-id="4958562394889520477">🥅</tg-emoji>',
+    "on_target": '<tg-emoji emoji-id="5449862290834735715">🎯</tg-emoji>',
+    "corners": '<tg-emoji emoji-id="4958711348650312955">🚩</tg-emoji>',
+    "fouls": '<tg-emoji emoji-id="4958638587609351070">🦵</tg-emoji>',
+    "passes": '<tg-emoji emoji-id="4958604885000979612">⚽</tg-emoji>',
+    "crosses": '<tg-emoji emoji-id="4958910665197618290">📐</tg-emoji>',
+    "tackles": '<tg-emoji emoji-id="4958645180384150616">🛡</tg-emoji>',
+    "saves": '<tg-emoji emoji-id="4958484449823031980">🧤</tg-emoji>',
+    "cards": (
         '<tg-emoji emoji-id="4958881820197258277">🟨</tg-emoji> '
         '<tg-emoji emoji-id="4958873294687175681">🟥</tg-emoji>'
     ),
 }
 
 LIVE_STAT_LABELS = {
-    "totalShots": "Finalizações",
-    "accuratePasses": "Passes certos",
-    "defensiveInterventions": "Intervenções defensivas",
-    "saves": "Defesas",
+    "totalShots": "shots",
+    "accuratePasses": "accurate_passes",
+    "defensiveInterventions": "defensive_interventions",
+    "saves": "saves",
 }
 
 
@@ -57,30 +58,8 @@ def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> li
     return chunks
 
 
-def _translated_status(status_text: str) -> str:
-    translations = {
-        "Scheduled": "Agendado",
-        "Final": "Encerrado",
-        "First Half": "Primeiro tempo",
-        "FT": "Encerrado",
-        "FT-Pens": "Encerrado nos pênaltis",
-        "Halftime": "Intervalo",
-        "HT": "Intervalo",
-        "In Progress": "Em andamento",
-        "Second Half": "Segundo tempo",
-        "Postponed": "Adiado",
-        "Canceled": "Cancelado",
-        "Cancelled": "Cancelado",
-    }
-    return translations.get(status_text, status_text)
-
-
-def _translated_goal_type(goal_type: str) -> str:
-    translations = {
-        "Goal": "Gol",
-        "Penalty - Scored": "Pênalti convertido",
-    }
-    return translations.get(goal_type, goal_type)
+def _translated_status(status: str, language: str = "en") -> str:
+    return status_text(status, language)
 
 
 def _find_competitor(competitors: list[dict[str, Any]], home_away: str) -> dict[str, Any] | None:
@@ -102,11 +81,12 @@ def _format_matchup(
     home: dict[str, Any] | None,
     away: dict[str, Any] | None,
     state: str,
+    language: str = "en",
 ) -> str:
     home_team = (home or {}).get("team", {})
     away_team = (away or {}).get("team", {})
-    home_name = translated_team_name_html(home_team) if home_team else "Mandante"
-    away_name = translated_team_name_html(away_team) if away_team else "Visitante"
+    home_name = translated_team_name_html(home_team, language=language) if home_team else text("home", language)
+    away_name = translated_team_name_html(away_team, language=language) if away_team else text("away", language)
 
     if state == "pre":
         return f"{home_name} x {away_name}"

@@ -9,6 +9,7 @@ from typing import Any
 from telegram import Update
 from telegram.ext import Application
 
+from worldcupquente.commands import build_bot_commands
 from worldcupquente.config import get_settings
 from worldcupquente.handlers import get_handlers
 from worldcupquente.live_monitor import (
@@ -30,19 +31,8 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application: Application) -> None:
     """Register bot commands for autocomplete and start live monitor."""
-    from telegram import BotCommand
-
-    commands = [
-        BotCommand(command="start", description="Iniciar o bot e ver comandos"),
-        BotCommand(command="hoje", description="Jogos de hoje"),
-        BotCommand(command="aovivo", description="Partidas ao vivo"),
-        BotCommand(command="calendario", description="Calendário de jogos por data ou seleção"),
-        BotCommand(command="tabela", description="Classificação por grupo"),
-        BotCommand(command="selecoes", description="Lista de seleções e elencos"),
-        BotCommand(command="config", description="Configurar notificações ao vivo"),
-    ]
     try:
-        await application.bot.set_my_commands(commands)
+        await application.bot.set_my_commands(build_bot_commands("en"))
         logger.info("Bot commands registered successfully with Telegram")
     except Exception:
         logger.exception("Failed to set Telegram commands")

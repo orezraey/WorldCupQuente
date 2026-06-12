@@ -12,7 +12,13 @@ from telegram.ext import ContextTypes
 
 from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.formatters import format_games
-from worldcupquente.handlers.utils import _get_service, _log_command
+from worldcupquente.handlers.utils import (
+    _get_chat_language,
+    _get_query_language,
+    _get_service,
+    _log_command,
+)
+from worldcupquente.i18n import text
 from worldcupquente.keyboards import (
     CALENDAR_GAMES_PAGE_SIZE,
     TEAMS_PAGE_SIZE,
@@ -33,46 +39,47 @@ async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     message = update.effective_message
     if message is None:
         return
-    await _send_calendar_menu(message.reply_text)
+    await _send_calendar_menu(message.reply_text, _get_chat_language(update, context))
 
 
-async def _send_calendar_menu(send_message: Any) -> None:
-    text = "<b>Calendário da Copa 2026</b>\nEscolha como deseja navegar pelos jogos."
+async def _send_calendar_menu(send_message: Any, language: str) -> None:
+    message_text = f"<b>{text('calendar_title', language)}</b>\n{text('calendar_body', language)}"
     await send_message(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_menu_keyboard(),
+        reply_markup=build_calendar_menu_keyboard(language),
     )
 
 
-async def _send_calendar_dates(send_message: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _send_calendar_dates(send_message: Any, context: ContextTypes.DEFAULT_TYPE, language: str) -> None:
     service = _get_service(context)
     try:
         events = await service.get_schedule_events()
     except Exception:
         logger.exception("Failed to fetch calendar dates")
-        await send_message("Não consegui buscar as datas do calendário agora.")
+        await send_message(text("calendar_dates_error", language))
         return
 
     dates = _event_date_params(events, service.bot_timezone)
-    text = "<b>Calendário por datas</b>\nEscolha uma data para ver os jogos."
+    message_text = f"<b>{text('calendar_dates_title', language)}</b>\n{text('calendar_dates_body', language)}"
     await send_message(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_dates_keyboard(dates),
+        reply_markup=build_calendar_dates_keyboard(dates, language),
     )
 
 
 async def _send_calendar_all_games(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     service = _get_service(context)
+    language = _get_query_language(query, context)
     page = _parse_calendar_page(data)
     try:
         events = sorted(await service.get_schedule_events(), key=lambda event: event.get("date", ""))
     except Exception:
         logger.exception("Failed to fetch full calendar")
         await query.edit_message_text(
-            "Não consegui buscar o calendário completo agora.",
-            reply_markup=build_calendar_back_to_dates_keyboard(),
+            text("calendar_full_error", language),
+            reply_markup=build_calendar_back_to_dates_keyboard(language),
         )
         return
 
@@ -80,23 +87,28 @@ async def _send_calendar_all_games(query: Any, context: ContextTypes.DEFAULT_TYP
     page = max(0, min(page, total_pages - 1))
     start = page * CALENDAR_GAMES_PAGE_SIZE
     page_events = events[start : start + CALENDAR_GAMES_PAGE_SIZE]
-    text = format_games(
+    message_text = format_games(
         page_events,
         service.bot_timezone,
-        f"Calendário completo - Página {page + 1}/{total_pages}",
-        "Nenhum jogo encontrado no calendário.",
+        text("calendar_full_title", language, page=page + 1, total_pages=total_pages),
+        text("calendar_full_empty", language),
+        language,
     )
     await query.edit_message_text(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_all_games_keyboard(page, total_pages),
+        reply_markup=build_calendar_all_games_keyboard(page, total_pages, language),
     )
 
 
 async def _send_calendar_date_games(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     parts = data.split(":")
+    language = _get_query_language(query, context)
     if len(parts) < 3 or not parts[2]:
-        await query.edit_message_text("Data inválida.", reply_markup=build_calendar_back_to_dates_keyboard())
+        await query.edit_message_text(
+            text("calendar_invalid_date", language),
+            reply_markup=build_calendar_back_to_dates_keyboard(language),
+        )
         return
 
     date_param = parts[2]
@@ -106,21 +118,22 @@ async def _send_calendar_date_games(query: Any, context: ContextTypes.DEFAULT_TY
     except Exception:
         logger.exception("Failed to fetch date calendar", extra={"date": date_param})
         await query.edit_message_text(
-            "Não consegui buscar os jogos desta data agora.",
-            reply_markup=build_calendar_back_to_dates_keyboard(),
+            text("calendar_date_error", language),
+            reply_markup=build_calendar_back_to_dates_keyboard(language),
         )
         return
 
-    text = format_games(
+    message_text = format_games(
         events,
         service.bot_timezone,
-        f"Jogos de {_format_date_title(date_param)}",
-        "Nenhum jogo encontrado nesta data.",
+        text("calendar_date_title", language, date=_format_date_title(date_param)),
+        text("calendar_date_empty", language),
+        language,
     )
     await query.edit_message_text(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_back_to_dates_keyboard(),
+        reply_markup=build_calendar_back_to_dates_keyboard(language),
     )
 
 
@@ -128,29 +141,31 @@ async def _send_calendar_teams_page(
     send_message: Any,
     context: ContextTypes.DEFAULT_TYPE,
     page: int,
+    language: str,
 ) -> None:
     service = _get_service(context)
     try:
         teams = await service.get_teams()
     except Exception:
         logger.exception("Failed to fetch calendar teams")
-        await send_message("Não consegui buscar a lista de seleções agora.")
+        await send_message(text("calendar_teams_error", language))
         return
 
     total_pages = max(1, (len(teams) + TEAMS_PAGE_SIZE - 1) // TEAMS_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
-    text = f"<b>Calendário por seleções</b>\nPágina {page + 1}/{total_pages}"
+    message_text = f"<b>{text('calendar_teams_title', language)}</b>\n{text('page', language, page=page + 1, total_pages=total_pages)}"
     await send_message(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_teams_keyboard(teams, page=page),
+        reply_markup=build_calendar_teams_keyboard(teams, page=page, language=language),
     )
 
 
 async def _send_calendar_team_games(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
     parts = data.split(":")
+    language = _get_query_language(query, context)
     if len(parts) < 3 or not parts[2]:
-        await query.edit_message_text("Seleção inválida.")
+        await query.edit_message_text(text("invalid_team", language))
         return
 
     team_id = parts[2]
@@ -163,22 +178,23 @@ async def _send_calendar_team_games(query: Any, context: ContextTypes.DEFAULT_TY
     except Exception:
         logger.exception("Failed to fetch team calendar", extra={"team_id": team_id})
         await query.edit_message_text(
-            "Não consegui buscar os jogos desta seleção agora.",
-            reply_markup=build_calendar_back_to_teams_keyboard(page),
+            text("calendar_team_error", language),
+            reply_markup=build_calendar_back_to_teams_keyboard(page, language),
         )
         return
 
-    team_name = translated_team_name(team or {"id": team_id})
-    text = format_games(
+    team_name = translated_team_name(team or {"id": team_id}, language=language)
+    message_text = format_games(
         events,
         service.bot_timezone,
-        f"Jogos de {team_name}",
-        "Nenhum jogo encontrado para esta seleção.",
+        text("calendar_team_title", language, team=team_name),
+        text("calendar_team_empty", language),
+        language,
     )
     await query.edit_message_text(
-        text,
+        message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_back_to_teams_keyboard(page),
+        reply_markup=build_calendar_back_to_teams_keyboard(page, language),
     )
 
 
@@ -208,10 +224,11 @@ def _format_date_title(date_param: str) -> str:
 
 async def handle_calendar_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
     data = query.data
+    language = _get_query_language(query, context)
     if data == "cal:menu":
-        await _send_calendar_menu(query.edit_message_text)
+        await _send_calendar_menu(query.edit_message_text, language)
     elif data == "cal:dates":
-        await _send_calendar_dates(query.edit_message_text, context)
+        await _send_calendar_dates(query.edit_message_text, context, language)
     elif data.startswith("cal:all:"):
         await _send_calendar_all_games(query, context, data)
     elif data.startswith("cal:date:"):
@@ -221,6 +238,7 @@ async def handle_calendar_callback(query: Any, context: ContextTypes.DEFAULT_TYP
             query.edit_message_text,
             context,
             page=_parse_calendar_page(data),
+            language=language,
         )
     elif data.startswith("cal:team:"):
         await _send_calendar_team_games(query, context, data)

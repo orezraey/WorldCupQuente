@@ -24,6 +24,7 @@ from worldcupquente.formatters import (
     format_penalty_notification,
     format_red_card_notification,
 )
+from worldcupquente.i18n import text
 from worldcupquente.notification_preferences import (
     FULL_TIME_NOTIFICATION,
     GOAL_NOTIFICATION,
@@ -238,7 +239,6 @@ async def _send_incident_notifications(
     service: WorldCupService,
 ) -> None:
     for notification_type, event, detail in notifications:
-        text = _format_live_notification(notification_type, event, detail)
         chat_ids = preferences.enabled_chat_ids(
             notification_type,
             service.settings.live_notification_chat_ids,
@@ -254,8 +254,14 @@ async def _send_incident_notifications(
                 if not preferences.get(chat_id).get(GOAL_NOTIFICATION, True)
             ]
         for chat_id in chat_ids:
+            language = preferences.get_language(chat_id)
+            notification_text = _format_live_notification(notification_type, event, detail, language)
             try:
-                await application.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text=notification_text,
+                    parse_mode=ParseMode.HTML,
+                )
             except Exception:
                 logger.exception(
                     "Failed to send live notification",
@@ -278,11 +284,20 @@ async def _send_status_notifications(
         halftime_text = None
         if notification_type == FULL_TIME_NOTIFICATION:
             group = await _standings_group_for_event(service, event)
-            full_time_html = format_full_time_notification_rich(event, service.bot_timezone, group)
         else:
-            halftime_text = format_match_status_notification(event, service.bot_timezone)
+            group = None
 
         for chat_id in chat_ids:
+            language = preferences.get_language(chat_id)
+            if notification_type == FULL_TIME_NOTIFICATION:
+                full_time_html = format_full_time_notification_rich(
+                    event,
+                    service.bot_timezone,
+                    group,
+                    language,
+                )
+            else:
+                halftime_text = format_match_status_notification(event, service.bot_timezone, language)
             try:
                 if notification_type == FULL_TIME_NOTIFICATION:
                     try:
@@ -301,8 +316,8 @@ async def _send_status_notifications(
                         await application.bot.send_message(
                             chat_id=chat_id,
                             text=(
-                                f"{format_match_status_notification(event, service.bot_timezone)}\n\n"
-                                "Tabela do grupo disponível em /tabela."
+                                f"{format_match_status_notification(event, service.bot_timezone, language)}\n\n"
+                                f"{text('full_time_fallback', language)}"
                             ),
                             parse_mode=ParseMode.HTML,
                         )
@@ -324,13 +339,14 @@ def _format_live_notification(
     notification_type: str,
     event: dict[str, Any],
     detail: dict[str, Any],
+    language: str = "en",
 ) -> str:
     if notification_type == GOAL_NOTIFICATION:
-        return format_goal_notification(event, detail)
+        return format_goal_notification(event, detail, language)
     if notification_type == PENALTY_NOTIFICATION:
-        return format_penalty_notification(event, detail)
+        return format_penalty_notification(event, detail, language)
     if notification_type == RED_CARD_NOTIFICATION:
-        return format_red_card_notification(event, detail)
+        return format_red_card_notification(event, detail, language)
     raise ValueError(f"Invalid notification type: {notification_type}")
 
 
@@ -562,10 +578,10 @@ def _scoring_details_for_score_change(
     fallback_details = [
         {
             "id": f"score-change:{team_id}:{':'.join(str(score) for score in score_after)}:{index}",
-            "clock": {
-                "value": fallback_clock.get("clock"),
-                "displayValue": fallback_clock.get("displayClock") or "minuto indisponível",
-            },
+                "clock": {
+                    "value": fallback_clock.get("clock"),
+                    "displayValue": fallback_clock.get("displayClock") or "",
+                },
             "team": team,
             "type": {"id": "score-change", "text": "Goal"},
             "scoreValue": 1,

@@ -11,7 +11,8 @@ from worldcupquente.handlers.config import handle_config_callback
 from worldcupquente.handlers.live import handle_live_callback
 from worldcupquente.handlers.standings import handle_standings_callback
 from worldcupquente.handlers.teams import handle_teams_callback
-from worldcupquente.handlers.utils import _log_command
+from worldcupquente.handlers.utils import _get_chat_language, _log_command
+from worldcupquente.i18n import text
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -19,17 +20,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = update.effective_message
     if message is None:
         return
-    text = (
-        "<b>Copa do Mundo 2026</b>\n\n"
-        "Comandos disponíveis:\n"
-        "/hoje - jogos de hoje\n"
-        "/aovivo - partidas ao vivo\n"
-        "/calendario - calendário de jogos por data ou seleção\n"
-        "/tabela - classificação por grupo\n"
-        "/selecoes - lista de seleções e elencos\n"
-        "/config - configurar notificações ao vivo"
+    language = _get_chat_language(update, context)
+    message_text = (
+        f"<b>{text('bot_title', language)}</b>\n\n"
+        f"{text('commands_available', language)}\n"
+        f"{text('start_today', language)}\n"
+        f"{text('start_live', language)}\n"
+        f"{text('start_calendar', language)}\n"
+        f"{text('start_standings', language)}\n"
+        f"{text('start_teams', language)}\n"
+        f"{text('start_config', language)}"
     )
-    await message.reply_text(text, parse_mode=ParseMode.HTML)
+    await message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

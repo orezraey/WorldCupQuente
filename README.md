@@ -1,32 +1,37 @@
 # WorldCupQuente
 
-WorldCupQuente é um bot para Telegram que acompanha jogos da Copa do Mundo FIFA 2026 usando endpoints públicos da ESPN. Ele exibe agenda, partidas ao vivo, classificação, seleções, elencos e notificações automáticas de eventos relevantes da partida.
+[Português](README.pt-BR.md)
 
-## Funcionalidades
+WorldCupQuente is a Telegram bot for following FIFA World Cup 2026 matches using public ESPN endpoints. It shows schedules, live matches, standings, teams, rosters, and automatic notifications for relevant match events.
 
-- Consulta de jogos do dia.
-- Consulta de partidas ao vivo.
-- Navegação pelo calendário por data ou seleção.
-- Classificação da fase de grupos.
-- Lista de seleções e elencos.
-- Notificações configuráveis por chat para gol, pênalti, cartão vermelho, intervalo e fim de jogo.
+## Features
 
-## Comandos Do Bot
+- Today's matches.
+- Live matches.
+- Calendar navigation by date or team.
+- Group-stage standings.
+- Teams and rosters.
+- Per-chat configurable notifications for goals, penalties, red cards, halftime, and full time.
+- Per-chat language selection in English or Portuguese through `/config`.
 
-- `/start` - mostra uma ajuda rápida.
-- `/hoje` - lista os jogos do dia.
-- `/aovivo` - mostra partidas ao vivo no momento.
-- `/calendario` - abre o calendário por datas ou seleções.
-- `/tabela` - mostra a classificação da fase de grupos.
-- `/selecoes` - lista seleções e permite abrir o elenco geral.
-- `/config` - configura notificações no chat atual.
+## Bot Commands
 
-## Requisitos
+- `/start` - shows quick help.
+- `/today` - lists today's matches.
+- `/live` - shows currently live matches.
+- `/calendar` - opens the calendar by date or team.
+- `/standings` - shows group-stage standings.
+- `/teams` - lists teams and opens full rosters.
+- `/config` - configures notifications and language for the current chat.
 
-- Python 3.12 ou superior.
-- Um token de bot do Telegram criado pelo BotFather.
+Portuguese aliases also remain available: `/hoje`, `/aovivo`, `/calendario`, `/tabela`, and `/selecoes`.
 
-## Instalação
+## Requirements
+
+- Python 3.12 or later.
+- A Telegram bot token created with BotFather.
+
+## Installation
 
 ```powershell
 python -m venv .venv
@@ -35,7 +40,7 @@ pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-Em Linux ou macOS:
+On Linux or macOS:
 
 ```bash
 python -m venv .venv
@@ -44,12 +49,12 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-## Configuração
+## Configuration
 
-Edite o arquivo `.env` e preencha as variáveis necessárias.
+Edit `.env` and fill in the required variables.
 
 ```env
-TELEGRAM_BOT_TOKEN=seu_token
+TELEGRAM_BOT_TOKEN=your_token
 BOT_TIME_ZONE=America/Sao_Paulo
 LIVE_NOTIFICATION_CHAT_IDS=123456789,-1001234567890
 LIVE_POLL_INTERVAL_SECONDS=30
@@ -59,59 +64,65 @@ ESPN_USER_AGENT=WorldCupQuente/0.1
 LOG_LEVEL=INFO
 ```
 
-| Variável | Obrigatória | Descrição |
+| Variable | Required | Description |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Sim | Token do bot do Telegram. |
-| `BOT_TIME_ZONE` | Não | Fuso horário usado para exibir datas e horários. O padrão é `America/Sao_Paulo`. |
-| `LIVE_NOTIFICATION_CHAT_IDS` | Não | Lista de chats que recebem notificações automáticas, separados por vírgula. |
-| `LIVE_POLL_INTERVAL_SECONDS` | Não | Intervalo de consulta do monitor ao vivo. O valor mínimo aplicado é 10 segundos. |
-| `NOTIFICATION_CONFIG_PATH` | Não | Caminho do arquivo local onde preferências por chat são salvas. |
-| `ESPN_TIMEOUT` | Não | Timeout, em segundos, para requisições à ESPN. |
-| `ESPN_USER_AGENT` | Não | User-Agent usado nas requisições HTTP. |
-| `LOG_LEVEL` | Não | Nível de log da aplicação, como `INFO`, `WARNING` ou `DEBUG`. |
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token. |
+| `BOT_TIME_ZONE` | No | Time zone used to display dates and times. Defaults to `America/Sao_Paulo`. |
+| `LIVE_NOTIFICATION_CHAT_IDS` | No | Comma-separated list of chats that receive automatic notifications. |
+| `LIVE_POLL_INTERVAL_SECONDS` | No | Polling interval for the live monitor. The minimum applied value is 10 seconds. |
+| `NOTIFICATION_CONFIG_PATH` | No | Local file path where per-chat preferences are saved. |
+| `ESPN_TIMEOUT` | No | Timeout, in seconds, for ESPN requests. |
+| `ESPN_USER_AGENT` | No | User-Agent used for HTTP requests. |
+| `LOG_LEVEL` | No | Application log level, such as `INFO`, `WARNING`, or `DEBUG`. |
 
-Não versione arquivos `.env` nem `notification_config.json`. Eles podem conter tokens, IDs de chats e preferências locais de usuários. O `.gitignore` do projeto já ignora esses arquivos.
+Do not commit `.env` or `notification_config.json`. They may contain tokens, chat IDs, and local user preferences. The project `.gitignore` already ignores these files.
 
-## Execução
+## Language
+
+English is the default language for new chats. Each chat can switch the bot to Portuguese in `/config`. The selected language is saved in the file configured by `NOTIFICATION_CONFIG_PATH`.
+
+The default Telegram command menu is registered in English. When a chat switches language in `/config`, the bot also updates that chat's command menu to the selected language when Telegram supports the scoped command update.
+
+## Running
 
 ```powershell
 python -m worldcupquente --drop-pending-updates
 ```
 
-Ou, após instalar o pacote em modo editável:
+Or, after installing the package in editable mode:
 
 ```powershell
 worldcupquente --drop-pending-updates
 ```
 
-O parâmetro `--drop-pending-updates` descarta mensagens acumuladas enquanto o bot estava offline.
+The `--drop-pending-updates` option discards messages queued while the bot was offline.
 
-## Notificações Ao Vivo
+## Live Notifications
 
-O monitor em segundo plano consulta partidas ativas e envia alertas para os chats configurados. As notificações são deduplicadas em memória durante a execução do processo.
+The background monitor polls active matches and sends alerts to configured chats. Notifications are deduplicated in memory while the process is running.
 
-O comando `/config` permite que cada chat ligue ou desligue tipos específicos de alerta. Essas preferências são salvas no caminho definido por `NOTIFICATION_CONFIG_PATH`.
+The `/config` command lets each chat enable or disable specific alert types and choose English or Portuguese. These preferences are saved to the path defined by `NOTIFICATION_CONFIG_PATH`.
 
-Para notificações de fim de jogo, o bot tenta usar `sendRichMessage` quando disponível no ambiente do Telegram utilizado. Caso esse método falhe, a aplicação registra o erro e envia uma mensagem HTML convencional como fallback.
+For full-time notifications, the bot tries to use `sendRichMessage` when available in the Telegram environment being used. If that method fails, the application logs the error and sends a regular HTML message as fallback.
 
-## Qualidade De Código
+## Code Quality
 
-Execute os testes:
+Run tests:
 
 ```bash
 python -m pytest
 ```
 
-Execute o lint:
+Run lint:
 
 ```bash
 python -m ruff check .
 ```
 
-## Fonte Dos Dados
+## Data Source
 
-Os dados são obtidos a partir de endpoints públicos da ESPN. Esses endpoints não são uma API oficial versionada para este projeto e podem mudar sem aviso. Em caso de mudanças na estrutura das respostas, parsers e formatadores podem precisar de ajustes.
+Data is fetched from public ESPN endpoints. These endpoints are not an official versioned API for this project and may change without notice. If response structures change, parsers and formatters may need updates.
 
-## Licença
+## License
 
-Este projeto é distribuído sob a licença MIT. Consulte o arquivo `LICENSE` para mais detalhes.
+This project is distributed under the MIT license. See `LICENSE` for details.

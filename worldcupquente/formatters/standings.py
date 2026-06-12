@@ -5,36 +5,37 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from worldcupquente.i18n import text
 from worldcupquente.team_translations import translated_team_name_html
 
 
-def format_standings_group_table(group: dict[str, Any]) -> str:
+def format_standings_group_table(group: dict[str, Any], language: str = "en") -> str:
     entries = (group.get("standings") or {}).get("entries", [])
-    title = _standings_group_title(group)
+    title = _standings_group_title(group, language)
     if not entries:
-        return f"<h3>{escape(title)}</h3><p>Nenhuma classificação encontrada para este grupo.</p>"
+        return f"<h3>{escape(title)}</h3><p>{text('standings_empty_group', language)}</p>"
 
     lines = [
         f"<h3>{escape(title)}</h3>",
         "<table bordered striped>",
         "<tr>"
         "<th>#</th>"
-        "<th>Seleção</th>"
+        f"<th>{text('team', language)}</th>"
         "<th>Pts</th>"
-        "<th>J</th>"
-        "<th>V</th>"
-        "<th>E</th>"
-        "<th>D</th>"
-        "<th>GP</th>"
-        "<th>GC</th>"
-        "<th>SG</th>"
+        f"<th>{text('played_short', language)}</th>"
+        f"<th>{text('wins_short', language)}</th>"
+        f"<th>{text('draws_short', language)}</th>"
+        f"<th>{text('losses_short', language)}</th>"
+        f"<th>{text('goals_for_short', language)}</th>"
+        f"<th>{text('goals_against_short', language)}</th>"
+        f"<th>{text('goal_diff_short', language)}</th>"
         "</tr>",
     ]
 
     for index, entry in enumerate(sorted(entries, key=_standings_entry_sort_key), start=1):
         stats = _standings_stats(entry)
         rank = _standings_stat(stats, "rank") or str(index)
-        team_name = translated_team_name_html(entry.get("team") or {})
+        team_name = translated_team_name_html(entry.get("team") or {}, language=language)
         lines.append(
             "<tr>"
             f'<td align="right">{escape(rank)}</td>'
@@ -53,18 +54,17 @@ def format_standings_group_table(group: dict[str, Any]) -> str:
     lines.extend(
         [
             "</table>",
-            "<footer>Pts: pontos · J: jogos · V: vitórias · E: empates · D: derrotas · "
-            "GP: gols pró · GC: gols contra · SG: saldo</footer>",
+            f"<footer>{text('standings_footer', language)}</footer>",
         ]
     )
     return "".join(lines)
 
 
-def _standings_group_title(group: dict[str, Any]) -> str:
+def _standings_group_title(group: dict[str, Any], language: str = "en") -> str:
     name = str(group.get("name") or "")
     if name.startswith("Group "):
-        return f"Tabela - Grupo {name.removeprefix('Group ')}"
-    return f"Tabela - {name or 'Grupo'}"
+        return text("standings_title_group", language, group=name.removeprefix("Group "))
+    return text("standings_title_default", language, group=name or text("standings_default_group", language))
 
 
 def _standings_stats(entry: dict[str, Any]) -> dict[str, str]:

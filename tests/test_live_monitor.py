@@ -231,6 +231,9 @@ class _FakePreferences:
     def get(self, chat_id: int) -> dict[str, bool]:
         return {GOAL_NOTIFICATION: self.goal_enabled[chat_id]}
 
+    def get_language(self, _chat_id: int) -> str:
+        return "en"
+
 
 class _FakeApplication:
     def __init__(self) -> None:

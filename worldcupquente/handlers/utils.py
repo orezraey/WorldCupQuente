@@ -36,3 +36,18 @@ def _get_notification_preferences(context: ContextTypes.DEFAULT_TYPE) -> Notific
     if not isinstance(preferences, NotificationPreferences):
         raise RuntimeError("notification_preferences is not configured")
     return preferences
+
+
+def _get_chat_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    chat = update.effective_chat
+    if chat is None:
+        return "en"
+    return _get_notification_preferences(context).get_language(chat.id)
+
+
+def _get_query_language(query: object, context: ContextTypes.DEFAULT_TYPE) -> str:
+    message = getattr(query, "message", None)
+    chat_id = getattr(message, "chat_id", None)
+    if chat_id is None:
+        return "en"
+    return _get_notification_preferences(context).get_language(chat_id)
