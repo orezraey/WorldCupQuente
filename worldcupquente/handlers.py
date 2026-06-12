@@ -13,6 +13,8 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 from worldcupquente.formatters import (
     format_games,
     format_live_games,
+    format_live_games_rich,
+    format_standings_group_table,
     format_team_roster,
     format_today_games,
     split_telegram_message,
@@ -29,6 +31,8 @@ from worldcupquente.keyboards import (
     build_calendar_teams_keyboard,
     build_live_stats_keyboard,
     build_notification_config_keyboard,
+    build_standings_back_keyboard,
+    build_standings_groups_keyboard,
     build_teams_keyboard,
 )
 from worldcupquente.notification_preferences import NotificationPreferences
@@ -49,6 +53,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "/hoje - jogos de hoje\n"
         "/aovivo - partidas ao vivo\n"
         "/calendario - calendário de jogos por data ou seleção\n"
+        "/tabela - classificação por grupo\n"
         "/selecoes - lista de seleções e elencos\n"
         "/config - configurar notificações ao vivo"
     )
@@ -109,6 +114,14 @@ async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await _send_calendar_menu(message.reply_text)
 
 
+async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "tabela")
+    message = update.effective_message
+    if message is None:
+        return
+    await _send_standings_menu(message.reply_text, context)
+
+
 async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _log_command(update, "config")
     message = update.effective_message
@@ -152,6 +165,12 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     if query.data.startswith("cal:team:"):
         await _send_calendar_team_games(query, context, query.data)
         return
+    if query.data == "table:menu":
+        await _send_standings_menu(query.edit_message_text, context)
+        return
+    if query.data.startswith("table:group:"):
+        await _send_standings_group(query, context, query.data)
+        return
     if query.data.startswith("live:stats:"):
         await _send_live_games(query, context, show_stats=query.data.endswith(":show"))
         return
@@ -166,6 +185,7 @@ def get_handlers() -> list[Any]:
         CommandHandler("hoje", today_command),
         CommandHandler("aovivo", live_command),
         CommandHandler("calendario", calendar_command),
+        CommandHandler("tabela", standings_command),
         CommandHandler("selecoes", teams_command),
         CommandHandler("config", config_command),
         CallbackQueryHandler(callback_query_handler),
@@ -259,16 +279,91 @@ async def _send_calendar_menu(send_message: Any) -> None:
     )
 
 
+async def _send_standings_menu(send_message: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+    service = _get_service(context)
+    try:
+        groups = await service.get_standings_groups()
+    except Exception:
+        logger.exception("Failed to fetch standings groups")
+        await send_message("Não consegui buscar os grupos da tabela agora.")
+        return
+
+    if not groups:
+        await send_message("Nenhum grupo encontrado na tabela da Copa agora.")
+        return
+
+    text = "<b>Tabela da Copa 2026</b>\nEscolha um grupo para ver a classificação."
+    await send_message(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_standings_groups_keyboard(groups),
+    )
+
+
+async def _send_standings_group(query: Any, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if query.message is None:
+        return
+
+    parts = data.split(":")
+    if len(parts) < 3 or not parts[2]:
+        await query.edit_message_text("Grupo inválido.", reply_markup=build_standings_back_keyboard())
+        return
+
+    group_id = parts[2]
+    service = _get_service(context)
+    try:
+        group = await service.get_standings_group(group_id)
+    except Exception:
+        logger.exception("Failed to fetch standings group", extra={"group_id": group_id})
+        await query.edit_message_text(
+            "Não consegui buscar a tabela deste grupo agora.",
+            reply_markup=build_standings_back_keyboard(),
+        )
+        return
+
+    if group is None:
+        await query.edit_message_text("Grupo não encontrado.", reply_markup=build_standings_back_keyboard())
+        return
+
+    await context.bot.do_api_request(
+        "editMessageText",
+        api_kwargs={
+            "chat_id": query.message.chat_id,
+            "message_id": query.message.message_id,
+            "rich_message": {
+                "html": format_standings_group_table(group),
+                "skip_entity_detection": True,
+            },
+            "reply_markup": build_standings_back_keyboard(),
+        },
+    )
+
+
 async def _send_live_games(query: Any, context: ContextTypes.DEFAULT_TYPE, show_stats: bool) -> None:
     service = _get_service(context)
     try:
         events = await service.get_live_events(use_cache=False)
-        text = format_live_games(events, service.bot_timezone, show_stats=show_stats)
     except Exception:
         logger.exception("Failed to fetch live games")
         await query.edit_message_text("Não consegui buscar as partidas ao vivo agora.")
         return
 
+    if show_stats and events and query.message is not None:
+        await context.bot.do_api_request(
+            "editMessageText",
+            api_kwargs={
+                "chat_id": query.message.chat_id,
+                "message_id": query.message.message_id,
+                "rich_message": {
+                    "html": format_live_games_rich(events, service.bot_timezone),
+                    "skip_entity_detection": True,
+                },
+                "reply_markup": build_live_stats_keyboard(show_stats=True),
+            },
+        )
+        return
+
+    text = format_live_games(events, service.bot_timezone)
     chunks = split_telegram_message(text)
     await query.edit_message_text(
         chunks[0],

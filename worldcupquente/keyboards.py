@@ -14,6 +14,22 @@ TEAMS_PAGE_SIZE = 12
 CALENDAR_GAMES_PAGE_SIZE = 6
 
 
+def build_standings_groups_keyboard(groups: list[dict[str, Any]]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buttons = [
+        InlineKeyboardButton(_standings_group_label(group), callback_data=f"table:group:{group.get('id')}")
+        for group in sorted(groups, key=_standings_group_sort_key)
+        if group.get("id")
+    ]
+    for index in range(0, len(buttons), 4):
+        rows.append(buttons[index : index + 4])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_standings_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Voltar para grupos", callback_data="table:menu")]])
+
+
 def build_teams_keyboard(
     teams: list[dict[str, Any]],
     page: int = 0,
@@ -160,3 +176,15 @@ def _format_date_label(date_param: str) -> str:
     except ValueError:
         return date_param
     return f"{weekdays[date.weekday()]} {date.strftime('%d/%m')}"
+
+
+def _standings_group_label(group: dict[str, Any]) -> str:
+    name = str(group.get("name") or group.get("abbreviation") or group.get("id") or "")
+    if name.startswith("Group "):
+        return f"Grupo {name.removeprefix('Group ')}"
+    return name
+
+
+def _standings_group_sort_key(group: dict[str, Any]) -> int:
+    group_id = str(group.get("id") or "")
+    return int(group_id) if group_id.isdigit() else 999

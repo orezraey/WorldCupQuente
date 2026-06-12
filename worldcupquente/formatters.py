@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -17,6 +18,24 @@ from worldcupquente.team_translations import translated_team_name_html
 TELEGRAM_MESSAGE_LIMIT = 3900
 RECENT_COMMENTARY_LIMIT = 5
 RED_CARD_EMOJI = '<tg-emoji emoji-id="5336787196479294713">🟥</tg-emoji>'
+LIVE_TITLE_EMOJI = '<tg-emoji emoji-id="5850297493593529930">🏆</tg-emoji>'
+LIVE_STATS_TITLE_EMOJI = '<tg-emoji emoji-id="5296265790654264117">📊</tg-emoji>'
+LIVE_STAT_LEADER_EMOJI = '<tg-emoji emoji-id="5821342125458985363">🔥</tg-emoji>'
+LIVE_STAT_LABEL_EMOJIS = {
+    "Posse": '<tg-emoji emoji-id="4958712589895861234">⚽</tg-emoji>',
+    "Finalizações": '<tg-emoji emoji-id="4958562394889520477">🥅</tg-emoji>',
+    "No alvo": '<tg-emoji emoji-id="5449862290834735715">🎯</tg-emoji>',
+    "Escanteios": '<tg-emoji emoji-id="4958711348650312955">🚩</tg-emoji>',
+    "Faltas": '<tg-emoji emoji-id="4958638587609351070">🦵</tg-emoji>',
+    "Passes": '<tg-emoji emoji-id="4958604885000979612">⚽</tg-emoji>',
+    "Cruzamentos": '<tg-emoji emoji-id="4958910665197618290">📐</tg-emoji>',
+    "Desarmes": '<tg-emoji emoji-id="4958645180384150616">🛡</tg-emoji>',
+    "Defesas": '<tg-emoji emoji-id="4958484449823031980">🧤</tg-emoji>',
+    "Cartões": (
+        '<tg-emoji emoji-id="4958881820197258277">🟨</tg-emoji> '
+        '<tg-emoji emoji-id="4958873294687175681">🟥</tg-emoji>'
+    ),
+}
 
 LIVE_STAT_LABELS = {
     "totalShots": "Finalizações",
@@ -60,11 +79,34 @@ def format_live_games(events: list[dict[str, Any]], tz: ZoneInfo, show_stats: bo
     if not events:
         return "Nenhuma partida da Copa do Mundo está ao vivo no momento."
 
-    lines = ["<b>Partidas ao vivo - Copa do Mundo 2026</b>", ""]
+    lines = [f"<b>{LIVE_TITLE_EMOJI} Partidas ao vivo - Copa do Mundo 2026</b>", ""]
     for event in sorted(events, key=lambda item: item.get("date", "")):
         lines.extend(_format_live_event(event, tz, show_stats=show_stats))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
+    if not events:
+        return "<p>Nenhuma partida da Copa do Mundo está ao vivo no momento.</p>"
+
+    blocks = [f"<h3>{LIVE_TITLE_EMOJI} Partidas ao vivo - Copa do Mundo 2026</h3>"]
+    for event in sorted(events, key=lambda item: item.get("date", "")):
+        competition = (event.get("competitions") or [{}])[0]
+        competitors = competition.get("competitors", [])
+        home = _find_competitor(competitors, "home")
+        away = _find_competitor(competitors, "away")
+
+        blocks.append(_rich_paragraph(_format_live_event(event, tz, show_stats=False)))
+        stats_table = _format_live_team_stats_table(event, home, away)
+        if stats_table:
+            blocks.append(stats_table)
+
+    return "".join(blocks)
+
+
+def _rich_paragraph(lines: list[str]) -> str:
+    return f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
 
 
 def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
@@ -175,6 +217,93 @@ def format_games(
         lines.extend(_format_event(event, tz))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def format_standings_group_table(group: dict[str, Any]) -> str:
+    entries = (group.get("standings") or {}).get("entries", [])
+    title = _standings_group_title(group)
+    if not entries:
+        return f"<h3>{escape(title)}</h3><p>Nenhuma classificação encontrada para este grupo.</p>"
+
+    lines = [
+        f"<h3>{escape(title)}</h3>",
+        "<table bordered striped>",
+        "<tr>"
+        "<th>#</th>"
+        "<th>Seleção</th>"
+        "<th>Pts</th>"
+        "<th>J</th>"
+        "<th>V</th>"
+        "<th>E</th>"
+        "<th>D</th>"
+        "<th>GP</th>"
+        "<th>GC</th>"
+        "<th>SG</th>"
+        "</tr>",
+    ]
+
+    for index, entry in enumerate(sorted(entries, key=_standings_entry_sort_key), start=1):
+        stats = _standings_stats(entry)
+        rank = _standings_stat(stats, "rank") or str(index)
+        team_name = translated_team_name_html(entry.get("team") or {})
+        lines.append(
+            "<tr>"
+            f'<td align="right">{escape(rank)}</td>'
+            f"<td>{team_name}</td>"
+            f'<td align="right"><b>{escape(_standings_stat(stats, "points"))}</b></td>'
+            f'<td align="right">{escape(_standings_stat(stats, "gamesPlayed"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "wins"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "ties"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "losses"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "pointsFor"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "pointsAgainst"))}</td>'
+            f'<td align="right">{escape(_standings_stat(stats, "pointDifferential"))}</td>'
+            "</tr>"
+        )
+
+    lines.extend(
+        [
+            "</table>",
+            "<footer>Pts: pontos · J: jogos · V: vitórias · E: empates · D: derrotas · "
+            "GP: gols pró · GC: gols contra · SG: saldo</footer>",
+        ]
+    )
+    return "".join(lines)
+
+
+def _standings_group_title(group: dict[str, Any]) -> str:
+    name = str(group.get("name") or "")
+    if name.startswith("Group "):
+        return f"Tabela - Grupo {name.removeprefix('Group ')}"
+    return f"Tabela - {name or 'Grupo'}"
+
+
+def _standings_stats(entry: dict[str, Any]) -> dict[str, str]:
+    stats: dict[str, str] = {}
+    for stat in entry.get("stats", []):
+        name = stat.get("name")
+        if not name:
+            continue
+        value = stat.get("displayValue")
+        if value is None or value == "":
+            value = stat.get("value")
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        stats[str(name)] = str(value) if value is not None else "-"
+    return stats
+
+
+def _standings_stat(stats: dict[str, str], name: str) -> str:
+    return stats.get(name) or "-"
+
+
+def _standings_entry_sort_key(entry: dict[str, Any]) -> tuple[int, str]:
+    stats = _standings_stats(entry)
+    rank = _standings_stat(stats, "rank")
+    if rank.isdigit():
+        return (int(rank), "")
+    team = entry.get("team") or {}
+    return (999, str(team.get("displayName") or team.get("name") or ""))
 
 
 def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
@@ -349,31 +478,118 @@ def _format_live_team_stats(
     away: dict[str, Any] | None,
 ) -> list[str]:
     home_stats, away_stats = _live_team_stats(event, home, away)
+    stat_rows = _live_team_stat_rows(home_stats, away_stats)
+    if not stat_rows:
+        return []
+    return ["<b>Estatísticas</b>", *[_format_stat_row(*row) for row in stat_rows]]
+
+
+def _format_live_team_stats_table(
+    event: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+) -> str | None:
+    home_stats, away_stats = _live_team_stats(event, home, away)
+    stat_rows = _live_team_stat_rows(home_stats, away_stats)
+    if not stat_rows:
+        return None
+
+    home_team = (home or {}).get("team") or {}
+    away_team = (away or {}).get("team") or {}
+    home_name = translated_team_name_html(home_team) if home_team else "Casa"
+    away_name = translated_team_name_html(away_team) if away_team else "Visitante"
+    lines = [
+        "<table bordered striped>",
+        "<tr>"
+        f"<th>{home_name or 'Casa'}</th>"
+        f"<th>{LIVE_STATS_TITLE_EMOJI} Estatística</th>"
+        f"<th>{away_name or 'Visitante'}</th>"
+        "</tr>",
+    ]
+    for label, home_value, away_value in stat_rows:
+        leader = _live_stat_leader(label, home_value, away_value)
+        lines.append(
+            "<tr>"
+            f'<td align="left">{_format_live_stat_table_value(home_value, leader == "home")}</td>'
+            f'<td align="center">{_format_live_stat_table_label(label)}</td>'
+            f'<td align="right">{_format_live_stat_table_value(away_value, leader == "away")}</td>'
+            "</tr>"
+        )
+    lines.append("</table>")
+    return "".join(lines)
+
+
+def _format_live_stat_table_value(value: str | None, is_leader: bool) -> str:
+    text = escape(value or "-")
+    return f"{text} {LIVE_STAT_LEADER_EMOJI}" if is_leader else text
+
+
+def _format_live_stat_table_label(label: str) -> str:
+    emoji = LIVE_STAT_LABEL_EMOJIS.get(label)
+    if not emoji:
+        return escape(label)
+    return f"{emoji} {escape(label)}"
+
+
+def _live_stat_leader(label: str, home_value: str | None, away_value: str | None) -> str | None:
+    if label == "Cartões":
+        return None
+
+    home_number = _first_stat_number(home_value)
+    away_number = _first_stat_number(away_value)
+    if home_number is None or away_number is None or home_number == away_number:
+        return None
+    return "home" if home_number > away_number else "away"
+
+
+def _first_stat_number(value: str | None) -> float | None:
+    if not value:
+        return None
+    match = re.search(r"-?\d+(?:[.,]\d+)?", value)
+    if match is None:
+        return None
+    try:
+        return float(match.group(0).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _live_team_stat_rows(
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+) -> list[tuple[str, str | None, str | None]]:
     if not home_stats and not away_stats:
         return []
 
     rows = [
-        _format_percent_stat("Posse", home_stats, away_stats, "possessionPct"),
-        _format_single_stat("Finalizações", home_stats, away_stats, "totalShots"),
-        _format_single_stat("No alvo", home_stats, away_stats, "shotsOnTarget"),
-        _format_single_stat("Escanteios", home_stats, away_stats, "wonCorners"),
-        _format_single_stat("Faltas", home_stats, away_stats, "foulsCommitted"),
-        _format_made_total_stat("Passes", home_stats, away_stats, "accuratePasses", "totalPasses"),
-        _format_made_total_stat(
-            "Cruzamentos",
-            home_stats,
-            away_stats,
-            "accurateCrosses",
-            "totalCrosses",
+        (
+            "Posse",
+            _format_percent_value(_stat_value(home_stats, "possessionPct")),
+            _format_percent_value(_stat_value(away_stats, "possessionPct")),
         ),
-        _format_made_total_stat("Desarmes", home_stats, away_stats, "effectiveTackles", "totalTackles"),
-        _format_single_stat("Defesas", home_stats, away_stats, "saves"),
-        _format_cards_stat(home_stats, away_stats),
+        ("Finalizações", _stat_value(home_stats, "totalShots"), _stat_value(away_stats, "totalShots")),
+        ("No alvo", _stat_value(home_stats, "shotsOnTarget"), _stat_value(away_stats, "shotsOnTarget")),
+        ("Escanteios", _stat_value(home_stats, "wonCorners"), _stat_value(away_stats, "wonCorners")),
+        ("Faltas", _stat_value(home_stats, "foulsCommitted"), _stat_value(away_stats, "foulsCommitted")),
+        (
+            "Passes",
+            _made_total_value(home_stats, "accuratePasses", "totalPasses"),
+            _made_total_value(away_stats, "accuratePasses", "totalPasses"),
+        ),
+        (
+            "Cruzamentos",
+            _made_total_value(home_stats, "accurateCrosses", "totalCrosses"),
+            _made_total_value(away_stats, "accurateCrosses", "totalCrosses"),
+        ),
+        (
+            "Desarmes",
+            _made_total_value(home_stats, "effectiveTackles", "totalTackles"),
+            _made_total_value(away_stats, "effectiveTackles", "totalTackles"),
+        ),
+        ("Defesas", _stat_value(home_stats, "saves"), _stat_value(away_stats, "saves")),
+        _cards_stat_values(home_stats, away_stats),
     ]
-    stat_rows = [row for row in rows if row]
-    if not stat_rows:
-        return []
-    return ["<b>Estatísticas</b>", *stat_rows]
+    return [row for row in rows if row[1] is not None or row[2] is not None]
 
 
 def _live_team_stats(
@@ -436,15 +652,23 @@ def _format_cards_stat(
     home_stats: dict[str, dict[str, Any]],
     away_stats: dict[str, dict[str, Any]],
 ) -> str | None:
+    label, home_value, away_value = _cards_stat_values(home_stats, away_stats)
+    return _format_stat_row(label, home_value, away_value)
+
+
+def _cards_stat_values(
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+) -> tuple[str, str | None, str | None]:
     home_yellow = _stat_value(home_stats, "yellowCards")
     home_red = _stat_value(home_stats, "redCards")
     away_yellow = _stat_value(away_stats, "yellowCards")
     away_red = _stat_value(away_stats, "redCards")
     if home_yellow is None and home_red is None and away_yellow is None and away_red is None:
-        return None
+        return ("Cartões", None, None)
     home_value = f"{home_yellow or '0'}A {home_red or '0'}V"
     away_value = f"{away_yellow or '0'}A {away_red or '0'}V"
-    return _format_stat_row("Cartões", home_value, away_value)
+    return ("Cartões", home_value, away_value)
 
 
 def _format_stat_row(label: str, home_value: str | None, away_value: str | None) -> str | None:

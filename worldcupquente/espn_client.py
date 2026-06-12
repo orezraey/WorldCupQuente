@@ -58,3 +58,9 @@ class ESPNClient:
 
     async def get_team_roster(self, sport: str, league: str, team_id: str) -> dict[str, Any]:
         return await self.get_json(f"/apis/site/v2/sports/{sport}/{league}/teams/{team_id}/roster")
+
+    async def get_standings(self, sport: str, league: str, season: int) -> dict[str, Any]:
+        return await self.get_json(
+            f"/apis/v2/sports/{sport}/{league}/standings",
+            params={"season": season},
+        )

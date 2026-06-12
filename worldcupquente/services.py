@@ -14,11 +14,13 @@ from worldcupquente.espn_client import ESPNClient
 
 WORLD_CUP_SPORT = "soccer"
 WORLD_CUP_LEAGUE = "fifa.world"
+WORLD_CUP_SEASON = 2026
 WORLD_CUP_START_DATE = "20260611"
 WORLD_CUP_END_DATE = "20260719"
 
 TODAY_GAMES_CACHE_SECONDS = 60
 SCHEDULE_CACHE_SECONDS = 60
+STANDINGS_CACHE_SECONDS = 60
 TEAMS_CACHE_SECONDS = 60 * 60 * 24
 ROSTER_CACHE_SECONDS = 60 * 60 * 12
 LIVE_STATUS_FALLBACK_WINDOW = timedelta(hours=3)
@@ -136,6 +138,23 @@ class WorldCupService:
         data = await self.client.get_team_roster(WORLD_CUP_SPORT, WORLD_CUP_LEAGUE, team_id)
         self.cache.set(cache_key, data, ROSTER_CACHE_SECONDS)
         return data
+
+    async def get_standings(self) -> dict[str, Any]:
+        cached = self.cache.get("standings")
+        if cached is not None:
+            return cached
+
+        data = await self.client.get_standings(WORLD_CUP_SPORT, WORLD_CUP_LEAGUE, WORLD_CUP_SEASON)
+        self.cache.set("standings", data, STANDINGS_CACHE_SECONDS)
+        return data
+
+    async def get_standings_groups(self) -> list[dict[str, Any]]:
+        standings = await self.get_standings()
+        return standings.get("children", [])
+
+    async def get_standings_group(self, group_id: str) -> dict[str, Any] | None:
+        groups = await self.get_standings_groups()
+        return next((group for group in groups if str(group.get("id", "")) == str(group_id)), None)
 
 
 def parse_espn_datetime(value: str, tz: tzinfo) -> datetime | None:
