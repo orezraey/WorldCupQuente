@@ -38,11 +38,11 @@ def get_settings() -> Settings:
     return Settings(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         bot_time_zone=os.getenv("BOT_TIME_ZONE", "America/Sao_Paulo"),
-        espn_timeout=float(os.getenv("ESPN_TIMEOUT", "30")),
+        espn_timeout=_env_float("ESPN_TIMEOUT", 30.0),
         espn_user_agent=os.getenv("ESPN_USER_AGENT", "WorldCupQuente/0.1"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         live_notification_chat_ids=_parse_chat_ids(os.getenv("LIVE_NOTIFICATION_CHAT_IDS", "")),
-        live_poll_interval_seconds=max(10, int(os.getenv("LIVE_POLL_INTERVAL_SECONDS", "30"))),
+        live_poll_interval_seconds=max(10, _env_int("LIVE_POLL_INTERVAL_SECONDS", 30)),
         notification_config_path=Path(
             os.getenv("NOTIFICATION_CONFIG_PATH", str(BASE_DIR / "notification_config.json"))
         ),
@@ -57,3 +57,17 @@ def _parse_chat_ids(value: str) -> tuple[ChatId, ...]:
             continue
         chat_ids.append(int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id)
     return tuple(chat_ids)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
