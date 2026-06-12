@@ -44,6 +44,12 @@ class ESPNClient:
             params={"dates": date, "limit": limit},
         )
 
+    async def get_summary(self, sport: str, league: str, event_id: str) -> dict[str, Any]:
+        return await self.get_json(
+            f"/apis/site/v2/sports/{sport}/{league}/summary",
+            params={"event": event_id},
+        )
+
     async def get_teams(self, sport: str, league: str, limit: int = 100) -> dict[str, Any]:
         return await self.get_json(
             f"/apis/site/v2/sports/{sport}/{league}/teams",

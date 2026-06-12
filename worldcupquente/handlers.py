@@ -27,6 +27,7 @@ from worldcupquente.keyboards import (
     build_calendar_dates_keyboard,
     build_calendar_menu_keyboard,
     build_calendar_teams_keyboard,
+    build_live_stats_keyboard,
     build_teams_keyboard,
 )
 from worldcupquente.services import WorldCupService, parse_espn_datetime
@@ -79,8 +80,14 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception:
         logger.exception("Failed to fetch live games")
         text = "Não consegui buscar as partidas ao vivo agora. Tente novamente em instantes."
-    for chunk in split_telegram_message(text):
-        await message.reply_text(chunk, parse_mode=ParseMode.HTML)
+        events = []
+    chunks = split_telegram_message(text)
+    for index, chunk in enumerate(chunks):
+        await message.reply_text(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            reply_markup=build_live_stats_keyboard() if events and index == 0 else None,
+        )
 
 
 async def teams_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -132,6 +139,9 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
     if query.data.startswith("cal:team:"):
         await _send_calendar_team_games(query, context, query.data)
+        return
+    if query.data.startswith("live:stats:"):
+        await _send_live_games(query, context, show_stats=query.data.endswith(":show"))
         return
 
 
@@ -190,6 +200,28 @@ async def _send_calendar_menu(send_message: Any) -> None:
         parse_mode=ParseMode.HTML,
         reply_markup=build_calendar_menu_keyboard(),
     )
+
+
+async def _send_live_games(query: Any, context: ContextTypes.DEFAULT_TYPE, show_stats: bool) -> None:
+    service = _get_service(context)
+    try:
+        events = await service.get_live_events(use_cache=False)
+        text = format_live_games(events, service.bot_timezone, show_stats=show_stats)
+    except Exception:
+        logger.exception("Failed to fetch live games")
+        await query.edit_message_text("Não consegui buscar as partidas ao vivo agora.")
+        return
+
+    chunks = split_telegram_message(text)
+    await query.edit_message_text(
+        chunks[0],
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_live_stats_keyboard(show_stats=show_stats) if events else None,
+    )
+    if query.message is None:
+        return
+    for chunk in chunks[1:]:
+        await query.message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
 
 async def _send_calendar_dates(send_message: Any, context: ContextTypes.DEFAULT_TYPE) -> None:

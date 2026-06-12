@@ -6,10 +6,19 @@ from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from worldcupquente.services import parse_espn_datetime
+from worldcupquente.services import parse_espn_datetime, scoring_plays_from_event
 from worldcupquente.team_translations import translated_team_name_html
 
 TELEGRAM_MESSAGE_LIMIT = 3900
+RECENT_COMMENTARY_LIMIT = 5
+RED_CARD_EMOJI = '<tg-emoji emoji-id="5336787196479294713">🟥</tg-emoji>'
+
+LIVE_STAT_LABELS = {
+    "totalShots": "Finalizações",
+    "accuratePasses": "Passes certos",
+    "defensiveInterventions": "Intervenções defensivas",
+    "saves": "Defesas",
+}
 
 
 def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
@@ -42,13 +51,13 @@ def format_today_games(scoreboard: dict[str, Any], tz: ZoneInfo) -> str:
     )
 
 
-def format_live_games(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
+def format_live_games(events: list[dict[str, Any]], tz: ZoneInfo, show_stats: bool = False) -> str:
     if not events:
         return "Nenhuma partida da Copa do Mundo está ao vivo no momento."
 
     lines = ["<b>Partidas ao vivo - Copa do Mundo 2026</b>", ""]
     for event in sorted(events, key=lambda item: item.get("date", "")):
-        lines.extend(_format_live_event(event, tz))
+        lines.extend(_format_live_event(event, tz, show_stats=show_stats))
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -57,7 +66,12 @@ def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> s
     competition = (event.get("competitions") or [{}])[0]
     competitors = competition.get("competitors", [])
     team = _find_team_by_id(competitors, str((detail.get("team") or {}).get("id", "")))
-    athlete = (detail.get("athletesInvolved") or [{}])[0]
+    athletes = detail.get("athletesInvolved") or [
+        participant.get("athlete") or {}
+        for participant in detail.get("participants", [])
+        if participant.get("athlete")
+    ]
+    athlete = (athletes or [{}])[0]
     scorer = athlete.get("displayName") or athlete.get("fullName") or "Autor indisponível"
     minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
     goal_type = str((detail.get("type") or {}).get("text") or "Goal")
@@ -124,14 +138,20 @@ def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
     return lines
 
 
-def _format_live_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
+def _format_live_event(event: dict[str, Any], tz: ZoneInfo, show_stats: bool = False) -> list[str]:
     competition = (event.get("competitions") or [{}])[0]
     status = competition.get("status") or event.get("status") or {}
     status_type = status.get("type", {})
-    status_text = _translated_status(
-        status_type.get("shortDetail") or status_type.get("detail") or "Ao vivo"
-    )
     display_clock = status.get("displayClock")
+    if status_type.get("state") == "pre":
+        status_text = "Ao vivo"
+    else:
+        status_source = status_type.get("shortDetail") or status_type.get("detail") or "Ao vivo"
+        if display_clock and status_source == display_clock:
+            status_source = status_type.get("description") or status_source
+        status_text = _translated_status(
+            status_source
+        )
 
     event_time = parse_espn_datetime(event.get("date", ""), tz)
     time_text = event_time.strftime("%d/%m %H:%M") if event_time else "Horário indefinido"
@@ -144,12 +164,363 @@ def _format_live_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
     venue = competition.get("venue", {}) or event.get("venue", {})
     venue_name = venue.get("fullName") or venue.get("displayName")
 
-    lines = [f"<b>{escape(time_text)}</b> - {matchup}"]
-    if display_clock:
-        lines.append(f"Minuto: {escape(str(display_clock))}")
-    lines.append(f"Status: {escape(str(status_text))}")
-    if venue_name:
-        lines.append(f"Estádio: {escape(str(venue_name))}")
+    lines = [f"<b>{escape(time_text)}</b>", matchup]
+    lines.append(f"🕘 Tempo: {escape(str(display_clock or 'indisponível'))}")
+    lines.append(f"📢 Status: {escape(str(status_text))}")
+    lines.append(f"🏟 Estádio: {escape(str(venue_name or 'indisponível'))}")
+
+    goal_lines = _format_live_goals(event)
+    if goal_lines:
+        lines.append("")
+        lines.extend(goal_lines)
+
+    red_card_lines = _format_live_red_cards(event)
+    if red_card_lines:
+        if not goal_lines:
+            lines.append("")
+        lines.extend(red_card_lines)
+
+    if not show_stats:
+        return lines
+
+    stat_lines = _format_live_team_stats(event, home, away)
+    if stat_lines:
+        lines.append("")
+        lines.extend(stat_lines)
+
+    leader_lines = _format_live_leaders(event)
+    if leader_lines:
+        lines.append("")
+        lines.extend(leader_lines)
+
+    commentary_lines = _format_recent_commentary(event)
+    if commentary_lines:
+        lines.append("")
+        lines.extend(commentary_lines)
+
+    return lines
+
+
+def _format_live_red_cards(event: dict[str, Any]) -> list[str]:
+    red_cards = _red_cards_from_event(event)
+    if not red_cards:
+        return []
+
+    lines: list[str] = []
+    for red_card in red_cards:
+        player = red_card.get("athlete") or {}
+        player_name = player.get("displayName") or player.get("fullName") or "Jogador indisponível"
+        minute = (red_card.get("clock") or {}).get("displayValue")
+        suffix = f" {escape(str(minute))}" if minute else ""
+        lines.append(f"{RED_CARD_EMOJI} {escape(str(player_name))}{suffix}")
+    return lines
+
+
+def _red_cards_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    red_cards: list[dict[str, Any]] = []
+    red_cards.extend(_red_cards_from_details(event))
+    red_cards.extend(_red_cards_from_commentary(event))
+    if not red_cards:
+        red_cards.extend(_red_cards_from_rosters(event))
+    return _dedupe_cards(red_cards)
+
+
+def _red_cards_from_details(event: dict[str, Any]) -> list[dict[str, Any]]:
+    competition = (event.get("competitions") or [{}])[0]
+    cards: list[dict[str, Any]] = []
+    for detail in competition.get("details", []):
+        detail_type = detail.get("type") or {}
+        type_text = f"{detail_type.get('type', '')} {detail_type.get('text', '')}".lower()
+        if detail.get("redCard") is not True and "red" not in type_text:
+            continue
+        athletes = detail.get("athletesInvolved") or [
+            participant.get("athlete") or {}
+            for participant in detail.get("participants", [])
+            if participant.get("athlete")
+        ]
+        athlete = athletes[0] if athletes else {}
+        cards.append({"athlete": athlete, "clock": detail.get("clock") or {}})
+    return cards
+
+
+def _red_cards_from_commentary(event: dict[str, Any]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for item in event.get("commentary", []):
+        play = item.get("play") or {}
+        play_type = play.get("type") or {}
+        type_text = f"{play_type.get('type', '')} {play_type.get('text', '')}".lower()
+        if "red" not in type_text or "card" not in type_text:
+            continue
+        participants = play.get("participants") or []
+        athlete = (participants[0].get("athlete") if participants else {}) or {}
+        cards.append({"athlete": athlete, "clock": play.get("clock") or item.get("time") or {}})
+    return cards
+
+
+def _red_cards_from_rosters(event: dict[str, Any]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for roster in event.get("rosters", []):
+        for player in roster.get("roster", []):
+            if _player_stat_value(player, "redCards") <= 0:
+                continue
+            cards.append({"athlete": player.get("athlete") or {}, "clock": {}})
+    return cards
+
+
+def _player_stat_value(player: dict[str, Any], stat_name: str) -> float:
+    for stat in player.get("stats", []):
+        if stat.get("name") != stat_name:
+            continue
+        try:
+            return float(stat.get("value") or stat.get("displayValue") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
+
+
+def _dedupe_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_ids: set[tuple[str, str]] = set()
+    seen_names: set[tuple[str, str]] = set()
+    for card in cards:
+        athlete = card.get("athlete") or {}
+        clock = card.get("clock") or {}
+        athlete_id = str(athlete.get("id") or "")
+        athlete_name = str(athlete.get("displayName") or athlete.get("fullName") or "")
+        minute = str(clock.get("displayValue") or "")
+        id_key = (athlete_id, minute)
+        name_key = (athlete_name, minute)
+        if (athlete_id and id_key in seen_ids) or (athlete_name and name_key in seen_names):
+            continue
+        if athlete_id:
+            seen_ids.add(id_key)
+        if athlete_name:
+            seen_names.add(name_key)
+        deduped.append(card)
+    return deduped
+
+
+def _format_live_goals(event: dict[str, Any]) -> list[str]:
+    goals = scoring_plays_from_event(event)
+    if not goals:
+        return []
+
+    lines: list[str] = []
+    for goal in goals:
+        athletes = goal.get("athletesInvolved") or [
+            participant.get("athlete") or {}
+            for participant in goal.get("participants", [])
+            if participant.get("athlete")
+        ]
+        scorer = (athletes or [{}])[0]
+        scorer_name = scorer.get("displayName") or scorer.get("fullName") or "Autor indisponível"
+        minute = (goal.get("clock") or {}).get("displayValue") or "minuto indisponível"
+        lines.append(f"⚽️ {escape(str(scorer_name))} {escape(str(minute))}")
+    return lines
+
+
+def _format_live_team_stats(
+    event: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+) -> list[str]:
+    home_stats, away_stats = _live_team_stats(event, home, away)
+    if not home_stats and not away_stats:
+        return []
+
+    rows = [
+        _format_percent_stat("Posse", home_stats, away_stats, "possessionPct"),
+        _format_single_stat("Finalizações", home_stats, away_stats, "totalShots"),
+        _format_single_stat("No alvo", home_stats, away_stats, "shotsOnTarget"),
+        _format_single_stat("Escanteios", home_stats, away_stats, "wonCorners"),
+        _format_single_stat("Faltas", home_stats, away_stats, "foulsCommitted"),
+        _format_made_total_stat("Passes", home_stats, away_stats, "accuratePasses", "totalPasses"),
+        _format_made_total_stat(
+            "Cruzamentos",
+            home_stats,
+            away_stats,
+            "accurateCrosses",
+            "totalCrosses",
+        ),
+        _format_made_total_stat("Desarmes", home_stats, away_stats, "effectiveTackles", "totalTackles"),
+        _format_single_stat("Defesas", home_stats, away_stats, "saves"),
+        _format_cards_stat(home_stats, away_stats),
+    ]
+    stat_rows = [row for row in rows if row]
+    if not stat_rows:
+        return []
+    return ["<b>Estatísticas</b>", *stat_rows]
+
+
+def _live_team_stats(
+    event: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    boxscore_teams = (event.get("boxscore") or {}).get("teams", [])
+    boxscore_stats = {
+        str((team_item.get("team") or {}).get("id", "")): _stats_by_name(
+            team_item.get("statistics", [])
+        )
+        for team_item in boxscore_teams
+    }
+
+    home_id = str(((home or {}).get("team") or {}).get("id", ""))
+    away_id = str(((away or {}).get("team") or {}).get("id", ""))
+    home_stats = boxscore_stats.get(home_id) or _stats_by_name((home or {}).get("statistics", []))
+    away_stats = boxscore_stats.get(away_id) or _stats_by_name((away or {}).get("statistics", []))
+    return home_stats, away_stats
+
+
+def _stats_by_name(statistics: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(stat.get("name")): stat for stat in statistics if stat.get("name")}
+
+
+def _format_percent_stat(
+    label: str,
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+    name: str,
+) -> str | None:
+    home_value = _format_percent_value(_stat_value(home_stats, name))
+    away_value = _format_percent_value(_stat_value(away_stats, name))
+    return _format_stat_row(label, home_value, away_value)
+
+
+def _format_single_stat(
+    label: str,
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+    name: str,
+) -> str | None:
+    return _format_stat_row(label, _stat_value(home_stats, name), _stat_value(away_stats, name))
+
+
+def _format_made_total_stat(
+    label: str,
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+    made_name: str,
+    total_name: str,
+) -> str | None:
+    home_value = _made_total_value(home_stats, made_name, total_name)
+    away_value = _made_total_value(away_stats, made_name, total_name)
+    return _format_stat_row(label, home_value, away_value)
+
+
+def _format_cards_stat(
+    home_stats: dict[str, dict[str, Any]],
+    away_stats: dict[str, dict[str, Any]],
+) -> str | None:
+    home_yellow = _stat_value(home_stats, "yellowCards")
+    home_red = _stat_value(home_stats, "redCards")
+    away_yellow = _stat_value(away_stats, "yellowCards")
+    away_red = _stat_value(away_stats, "redCards")
+    if home_yellow is None and home_red is None and away_yellow is None and away_red is None:
+        return None
+    home_value = f"{home_yellow or '0'}A {home_red or '0'}V"
+    away_value = f"{away_yellow or '0'}A {away_red or '0'}V"
+    return _format_stat_row("Cartões", home_value, away_value)
+
+
+def _format_stat_row(label: str, home_value: str | None, away_value: str | None) -> str | None:
+    if home_value is None and away_value is None:
+        return None
+    return f"{escape(label)}: {escape(home_value or '-')} x {escape(away_value or '-')}"
+
+
+def _stat_value(stats: dict[str, dict[str, Any]], name: str) -> str | None:
+    stat = stats.get(name) or {}
+    value = stat.get("displayValue")
+    if value is None:
+        value = stat.get("value")
+    return str(value) if value is not None else None
+
+
+def _format_percent_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{float(value):.0f}%"
+    except ValueError:
+        return value if value.endswith("%") else f"{value}%"
+
+
+def _made_total_value(
+    stats: dict[str, dict[str, Any]],
+    made_name: str,
+    total_name: str,
+) -> str | None:
+    made = _stat_value(stats, made_name)
+    total = _stat_value(stats, total_name)
+    if made is None and total is None:
+        return None
+    if made is None or total is None:
+        return made or total
+    return f"{made}/{total}"
+
+
+def _format_live_leaders(event: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for stat_name, label in LIVE_STAT_LABELS.items():
+        leader = _best_leader(event, stat_name)
+        if leader is None:
+            continue
+        team, athlete, value = leader
+        team_name = translated_team_name_html(team, include_emoji=False)
+        athlete_name = escape(str(athlete.get("displayName") or athlete.get("fullName") or "Jogador"))
+        lines.append(f"{escape(label)}: {athlete_name} ({team_name}) - {escape(value)}")
+    if not lines:
+        return []
+    return ["<b>Destaques</b>", *lines]
+
+
+def _best_leader(
+    event: dict[str, Any],
+    stat_name: str,
+) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+    candidates: list[tuple[float, dict[str, Any], dict[str, Any], str]] = []
+    for team_group in event.get("leaders", []):
+        team = team_group.get("team") or {}
+        for stat_group in team_group.get("leaders", []):
+            if stat_group.get("name") != stat_name:
+                continue
+            for leader in stat_group.get("leaders", []):
+                athlete = leader.get("athlete") or {}
+                display_value = str(leader.get("displayValue") or _leader_stat_value(leader, stat_name))
+                value = _numeric_value(display_value)
+                candidates.append((value, team, athlete, display_value))
+    if not candidates:
+        return None
+    _, team, athlete, display_value = max(candidates, key=lambda item: item[0])
+    return team, athlete, display_value
+
+
+def _leader_stat_value(leader: dict[str, Any], stat_name: str) -> str:
+    for stat in leader.get("statistics", []):
+        if stat.get("name") == stat_name:
+            return str(stat.get("displayValue") or stat.get("value") or "0")
+    return "0"
+
+
+def _numeric_value(value: str) -> float:
+    try:
+        return float(value.replace("%", ""))
+    except ValueError:
+        return 0.0
+
+
+def _format_recent_commentary(event: dict[str, Any]) -> list[str]:
+    commentary = [item for item in event.get("commentary", []) if item.get("text")]
+    if not commentary:
+        return []
+
+    recent = sorted(commentary, key=lambda item: int(item.get("sequence") or 0), reverse=True)
+    lines = ["<b>Últimos lances</b>"]
+    for item in recent[:RECENT_COMMENTARY_LIMIT]:
+        minute = (item.get("time") or {}).get("displayValue")
+        prefix = f"{minute}: " if minute else ""
+        lines.append(f"- {escape(prefix + str(item.get('text', '')))}")
     return lines
 
 
@@ -275,10 +646,13 @@ def _translated_status(status_text: str) -> str:
     translations = {
         "Scheduled": "Agendado",
         "Final": "Encerrado",
+        "First Half": "Primeiro tempo",
         "FT": "Encerrado",
         "FT-Pens": "Encerrado nos pênaltis",
         "Halftime": "Intervalo",
         "HT": "Intervalo",
+        "In Progress": "Em andamento",
+        "Second Half": "Segundo tempo",
         "Postponed": "Adiado",
         "Canceled": "Cancelado",
         "Cancelled": "Cancelado",

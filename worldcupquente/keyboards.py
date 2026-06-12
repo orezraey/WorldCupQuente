@@ -60,6 +60,12 @@ def build_calendar_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def build_live_stats_keyboard(show_stats: bool = False) -> InlineKeyboardMarkup:
+    label = "Esconder estatísticas" if show_stats else "Estatísticas"
+    action = "hide" if show_stats else "show"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"live:stats:{action}")]])
+
+
 def build_calendar_dates_keyboard(date_params: list[str]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton("Todos", callback_data="cal:all:0")]
