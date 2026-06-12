@@ -24,6 +24,7 @@ class Settings:
     log_level: str = "INFO"
     live_notification_chat_ids: tuple[ChatId, ...] = ()
     live_poll_interval_seconds: int = 30
+    notification_config_path: Path = BASE_DIR / "notification_config.json"
 
     @property
     def zoneinfo(self) -> ZoneInfo:
@@ -42,6 +43,9 @@ def get_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         live_notification_chat_ids=_parse_chat_ids(os.getenv("LIVE_NOTIFICATION_CHAT_IDS", "")),
         live_poll_interval_seconds=max(10, int(os.getenv("LIVE_POLL_INTERVAL_SECONDS", "30"))),
+        notification_config_path=Path(
+            os.getenv("NOTIFICATION_CONFIG_PATH", str(BASE_DIR / "notification_config.json"))
+        ),
     )
 
 

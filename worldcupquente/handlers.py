@@ -28,8 +28,10 @@ from worldcupquente.keyboards import (
     build_calendar_menu_keyboard,
     build_calendar_teams_keyboard,
     build_live_stats_keyboard,
+    build_notification_config_keyboard,
     build_teams_keyboard,
 )
+from worldcupquente.notification_preferences import NotificationPreferences
 from worldcupquente.services import WorldCupService, parse_espn_datetime
 from worldcupquente.team_translations import translated_team_name
 
@@ -47,7 +49,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "/hoje - jogos de hoje\n"
         "/aovivo - partidas ao vivo\n"
         "/calendario - calendário de jogos por data ou seleção\n"
-        "/selecoes - lista de seleções e elencos"
+        "/selecoes - lista de seleções e elencos\n"
+        "/config - configurar notificações ao vivo"
     )
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -106,6 +109,15 @@ async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await _send_calendar_menu(message.reply_text)
 
 
+async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_command(update, "config")
+    message = update.effective_message
+    chat = update.effective_chat
+    if message is None or chat is None:
+        return
+    await _send_notification_config(message.reply_text, context, chat.id)
+
+
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None:
@@ -143,6 +155,9 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     if query.data.startswith("live:stats:"):
         await _send_live_games(query, context, show_stats=query.data.endswith(":show"))
         return
+    if query.data.startswith("config:toggle:"):
+        await _toggle_notification_config(query, context)
+        return
 
 
 def get_handlers() -> list[Any]:
@@ -152,6 +167,7 @@ def get_handlers() -> list[Any]:
         CommandHandler("aovivo", live_command),
         CommandHandler("calendario", calendar_command),
         CommandHandler("selecoes", teams_command),
+        CommandHandler("config", config_command),
         CallbackQueryHandler(callback_query_handler),
     ]
 
@@ -172,6 +188,47 @@ def _get_service(context: ContextTypes.DEFAULT_TYPE) -> WorldCupService:
     if not isinstance(service, WorldCupService):
         raise RuntimeError("world_cup_service is not configured")
     return service
+
+
+def _get_notification_preferences(context: ContextTypes.DEFAULT_TYPE) -> NotificationPreferences:
+    preferences = context.application.bot_data["notification_preferences"]
+    if not isinstance(preferences, NotificationPreferences):
+        raise RuntimeError("notification_preferences is not configured")
+    return preferences
+
+
+async def _send_notification_config(
+    send_message: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+) -> None:
+    preferences = _get_notification_preferences(context)
+    settings = preferences.ensure_chat(chat_id)
+    text = "<b>Notificações ao vivo</b>\nEscolha quais alertas este chat deve receber."
+    await send_message(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_notification_config_keyboard(settings),
+    )
+
+
+async def _toggle_notification_config(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if query.message is None:
+        return
+    notification_type = query.data.rsplit(":", maxsplit=1)[-1]
+    preferences = _get_notification_preferences(context)
+    try:
+        settings = preferences.toggle(query.message.chat_id, notification_type)
+    except ValueError:
+        await query.edit_message_text("Configuração inválida.")
+        return
+
+    text = "<b>Notificações ao vivo</b>\nEscolha quais alertas este chat deve receber."
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=build_notification_config_keyboard(settings),
+    )
 
 
 async def _send_teams_page(send_message: Any, context: ContextTypes.DEFAULT_TYPE, page: int) -> None:

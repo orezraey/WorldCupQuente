@@ -7,6 +7,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from worldcupquente.notification_preferences import NOTIFICATION_LABELS, NOTIFICATION_TYPES
 from worldcupquente.team_translations import translated_team_name
 
 TEAMS_PAGE_SIZE = 12
@@ -64,6 +65,15 @@ def build_live_stats_keyboard(show_stats: bool = False) -> InlineKeyboardMarkup:
     label = "Esconder estatísticas" if show_stats else "Estatísticas"
     action = "hide" if show_stats else "show"
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"live:stats:{action}")]])
+
+
+def build_notification_config_keyboard(settings: dict[str, bool]) -> InlineKeyboardMarkup:
+    rows = []
+    for notification_type in NOTIFICATION_TYPES:
+        state = "ligado" if settings.get(notification_type, True) else "desligado"
+        label = f"{NOTIFICATION_LABELS[notification_type]}: {state}"
+        rows.append([InlineKeyboardButton(label, callback_data=f"config:toggle:{notification_type}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_calendar_dates_keyboard(date_params: list[str]) -> InlineKeyboardMarkup:
