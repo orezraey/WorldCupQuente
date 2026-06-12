@@ -34,9 +34,8 @@ def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: 
 
     lines = [
         f"<b>⏰ {text('pre_game_header', language)}</b>",
-        text("pre_game_body", language),
         "",
-        _format_matchup(home, away, "pre", language),
+        f"⚽️ {_format_matchup(home, away, 'pre', language)}",
     ]
     if event_time:
         lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
