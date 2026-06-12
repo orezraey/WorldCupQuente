@@ -1,4 +1,4 @@
-"""Telegram message formatters."""
+"""Games, fixtures and match statistics formatters."""
 
 from __future__ import annotations
 
@@ -8,61 +8,24 @@ from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from worldcupquente.services import (
-    parse_espn_datetime,
+from worldcupquente.espn_events import parse_espn_datetime
+from worldcupquente.event_incidents import (
     red_cards_from_event,
     scoring_plays_from_event,
 )
+from worldcupquente.formatters.utils import (
+    LIVE_STAT_LABEL_EMOJIS,
+    LIVE_STAT_LABELS,
+    LIVE_STAT_LEADER_EMOJI,
+    LIVE_STATS_TITLE_EMOJI,
+    LIVE_TITLE_EMOJI,
+    RECENT_COMMENTARY_LIMIT,
+    RED_CARD_EMOJI,
+    _find_competitor,
+    _format_matchup,
+    _translated_status,
+)
 from worldcupquente.team_translations import translated_team_name_html
-
-TELEGRAM_MESSAGE_LIMIT = 3900
-RECENT_COMMENTARY_LIMIT = 5
-RED_CARD_EMOJI = '<tg-emoji emoji-id="5336787196479294713">🟥</tg-emoji>'
-LIVE_TITLE_EMOJI = '<tg-emoji emoji-id="5850297493593529930">🏆</tg-emoji>'
-LIVE_STATS_TITLE_EMOJI = '<tg-emoji emoji-id="5296265790654264117">📊</tg-emoji>'
-LIVE_STAT_LEADER_EMOJI = '<tg-emoji emoji-id="5821342125458985363">🔥</tg-emoji>'
-LIVE_STAT_LABEL_EMOJIS = {
-    "Posse": '<tg-emoji emoji-id="4958712589895861234">⚽</tg-emoji>',
-    "Finalizações": '<tg-emoji emoji-id="4958562394889520477">🥅</tg-emoji>',
-    "No alvo": '<tg-emoji emoji-id="5449862290834735715">🎯</tg-emoji>',
-    "Escanteios": '<tg-emoji emoji-id="4958711348650312955">🚩</tg-emoji>',
-    "Faltas": '<tg-emoji emoji-id="4958638587609351070">🦵</tg-emoji>',
-    "Passes": '<tg-emoji emoji-id="4958604885000979612">⚽</tg-emoji>',
-    "Cruzamentos": '<tg-emoji emoji-id="4958910665197618290">📐</tg-emoji>',
-    "Desarmes": '<tg-emoji emoji-id="4958645180384150616">🛡</tg-emoji>',
-    "Defesas": '<tg-emoji emoji-id="4958484449823031980">🧤</tg-emoji>',
-    "Cartões": (
-        '<tg-emoji emoji-id="4958881820197258277">🟨</tg-emoji> '
-        '<tg-emoji emoji-id="4958873294687175681">🟥</tg-emoji>'
-    ),
-}
-
-LIVE_STAT_LABELS = {
-    "totalShots": "Finalizações",
-    "accuratePasses": "Passes certos",
-    "defensiveInterventions": "Intervenções defensivas",
-    "saves": "Defesas",
-}
-
-
-def split_telegram_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
-    if len(text) <= limit:
-        return [text]
-
-    chunks: list[str] = []
-    current: list[str] = []
-    current_length = 0
-    for line in text.splitlines():
-        line_length = len(line) + 1
-        if current and current_length + line_length > limit:
-            chunks.append("\n".join(current))
-            current = []
-            current_length = 0
-        current.append(line)
-        current_length += line_length
-    if current:
-        chunks.append("\n".join(current))
-    return chunks
 
 
 def format_today_games(scoreboard: dict[str, Any], tz: ZoneInfo) -> str:
@@ -97,121 +60,16 @@ def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
         home = _find_competitor(competitors, "home")
         away = _find_competitor(competitors, "away")
 
-        blocks.append(_rich_paragraph(_format_live_event(event, tz, show_stats=False)))
+        # In order to avoid circular dependency, we inline the rich paragraph logic here
+        lines = _format_live_event(event, tz, show_stats=False)
+        paragraph = f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
+        blocks.append(paragraph)
+
         stats_table = _format_live_team_stats_table(event, home, away)
         if stats_table:
             blocks.append(stats_table)
 
     return "".join(blocks)
-
-
-def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo) -> str:
-    return "\n".join(_format_live_event(event, tz, show_stats=False))
-
-
-def format_full_time_notification_rich(
-    event: dict[str, Any],
-    tz: ZoneInfo,
-    group: dict[str, Any] | None,
-) -> str:
-    blocks = [_rich_paragraph(_format_live_event(event, tz, show_stats=False))]
-    if group is not None:
-        blocks.append(format_standings_group_table(group))
-    return "".join(blocks)
-
-
-def _rich_paragraph(lines: list[str]) -> str:
-    return f"<p>{'<br/>'.join(line for line in lines if line)}</p>"
-
-
-def format_goal_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
-    competition = (event.get("competitions") or [{}])[0]
-    competitors = competition.get("competitors", [])
-    athletes = detail.get("athletesInvolved") or [
-        participant.get("athlete") or {}
-        for participant in detail.get("participants", [])
-        if participant.get("athlete")
-    ]
-    athlete = (athletes or [{}])[0]
-    scorer = athlete.get("displayName") or athlete.get("fullName") or "Autor indisponível"
-    minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
-
-    home = _find_competitor(competitors, "home")
-    away = _find_competitor(competitors, "away")
-    status = competition.get("status") or event.get("status") or {}
-    state = (status.get("type") or {}).get("state", "in")
-
-    header = "⚽️ <b>GOL CONTRA!</b>" if detail.get("ownGoal") else "⚽️ <b>GOL!</b>"
-
-    lines = [
-        header,
-        f"👤 {escape(str(scorer))} ({escape(str(minute))})",
-        "",
-        _format_matchup(home, away, str(state)),
-    ]
-    return "\n".join(lines)
-
-
-def format_penalty_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
-    competition = (event.get("competitions") or [{}])[0]
-    competitors = competition.get("competitors", [])
-    team = _find_team_by_id(competitors, str((detail.get("team") or {}).get("id", "")))
-    athletes = detail.get("athletesInvolved") or [
-        participant.get("athlete") or {}
-        for participant in detail.get("participants", [])
-        if participant.get("athlete")
-    ]
-    athlete = (athletes or [{}])[0]
-    player = athlete.get("displayName") or athlete.get("fullName")
-    minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
-    description = detail.get("text") or (detail.get("type") or {}).get("text") or "Pênalti"
-
-    home = _find_competitor(competitors, "home")
-    away = _find_competitor(competitors, "away")
-    status = competition.get("status") or event.get("status") or {}
-    state = (status.get("type") or {}).get("state", "in")
-
-    lines = [
-        "<b>Pênalti na Copa do Mundo!</b>",
-        f"Minuto: <b>{escape(str(minute))}</b>",
-        f"Seleção: <b>{translated_team_name_html(team)}</b>",
-    ]
-    if player:
-        lines.append(f"Jogador: <b>{escape(str(player))}</b>")
-    lines.extend(
-        [
-            f"Lance: {escape(str(description))}",
-            "",
-            _format_matchup(home, away, str(state)),
-        ]
-    )
-    return "\n".join(lines)
-
-
-def format_red_card_notification(event: dict[str, Any], detail: dict[str, Any]) -> str:
-    competition = (event.get("competitions") or [{}])[0]
-    competitors = competition.get("competitors", [])
-    team = _find_team_by_id(competitors, str((detail.get("team") or {}).get("id", "")))
-    athlete = detail.get("athlete") or {}
-    player = athlete.get("displayName") or athlete.get("fullName") or "Jogador indisponível"
-    minute = (detail.get("clock") or {}).get("displayValue") or "minuto indisponível"
-    description = detail.get("text") or (detail.get("type") or {}).get("text") or "Cartão vermelho"
-
-    home = _find_competitor(competitors, "home")
-    away = _find_competitor(competitors, "away")
-    status = competition.get("status") or event.get("status") or {}
-    state = (status.get("type") or {}).get("state", "in")
-
-    lines = [
-        f"<b>{RED_CARD_EMOJI} Cartão vermelho na Copa do Mundo!</b>",
-        f"Minuto: <b>{escape(str(minute))}</b>",
-        f"Jogador: <b>{escape(str(player))}</b>",
-        f"Seleção: <b>{translated_team_name_html(team)}</b>",
-        f"Lance: {escape(str(description))}",
-        "",
-        _format_matchup(home, away, str(state)),
-    ]
-    return "\n".join(lines)
 
 
 def format_games(
@@ -228,93 +86,6 @@ def format_games(
         lines.extend(_format_event(event, tz))
         lines.append("")
     return "\n".join(lines).strip()
-
-
-def format_standings_group_table(group: dict[str, Any]) -> str:
-    entries = (group.get("standings") or {}).get("entries", [])
-    title = _standings_group_title(group)
-    if not entries:
-        return f"<h3>{escape(title)}</h3><p>Nenhuma classificação encontrada para este grupo.</p>"
-
-    lines = [
-        f"<h3>{escape(title)}</h3>",
-        "<table bordered striped>",
-        "<tr>"
-        "<th>#</th>"
-        "<th>Seleção</th>"
-        "<th>Pts</th>"
-        "<th>J</th>"
-        "<th>V</th>"
-        "<th>E</th>"
-        "<th>D</th>"
-        "<th>GP</th>"
-        "<th>GC</th>"
-        "<th>SG</th>"
-        "</tr>",
-    ]
-
-    for index, entry in enumerate(sorted(entries, key=_standings_entry_sort_key), start=1):
-        stats = _standings_stats(entry)
-        rank = _standings_stat(stats, "rank") or str(index)
-        team_name = translated_team_name_html(entry.get("team") or {})
-        lines.append(
-            "<tr>"
-            f'<td align="right">{escape(rank)}</td>'
-            f"<td>{team_name}</td>"
-            f'<td align="right"><b>{escape(_standings_stat(stats, "points"))}</b></td>'
-            f'<td align="right">{escape(_standings_stat(stats, "gamesPlayed"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "wins"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "ties"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "losses"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "pointsFor"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "pointsAgainst"))}</td>'
-            f'<td align="right">{escape(_standings_stat(stats, "pointDifferential"))}</td>'
-            "</tr>"
-        )
-
-    lines.extend(
-        [
-            "</table>",
-            "<footer>Pts: pontos · J: jogos · V: vitórias · E: empates · D: derrotas · "
-            "GP: gols pró · GC: gols contra · SG: saldo</footer>",
-        ]
-    )
-    return "".join(lines)
-
-
-def _standings_group_title(group: dict[str, Any]) -> str:
-    name = str(group.get("name") or "")
-    if name.startswith("Group "):
-        return f"Tabela - Grupo {name.removeprefix('Group ')}"
-    return f"Tabela - {name or 'Grupo'}"
-
-
-def _standings_stats(entry: dict[str, Any]) -> dict[str, str]:
-    stats: dict[str, str] = {}
-    for stat in entry.get("stats", []):
-        name = stat.get("name")
-        if not name:
-            continue
-        value = stat.get("displayValue")
-        if value is None or value == "":
-            value = stat.get("value")
-        if isinstance(value, float) and value.is_integer():
-            value = int(value)
-        stats[str(name)] = str(value) if value is not None else "-"
-    return stats
-
-
-def _standings_stat(stats: dict[str, str], name: str) -> str:
-    return stats.get(name) or "-"
-
-
-def _standings_entry_sort_key(entry: dict[str, Any]) -> tuple[int, str]:
-    stats = _standings_stats(entry)
-    rank = _standings_stat(stats, "rank")
-    if rank.isdigit():
-        return (int(rank), "")
-    team = entry.get("team") or {}
-    return (999, str(team.get("displayName") or team.get("name") or ""))
 
 
 def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
@@ -345,7 +116,7 @@ def _format_event(event: dict[str, Any], tz: ZoneInfo) -> list[str]:
     venue_name = venue.get("fullName") or venue.get("displayName")
 
     lines = [
-        f"<b>🕘 {escape(time_text)}</b>",
+        f"<b>Com início às {escape(time_text)}</b>",
         f"⚽️ {matchup}",
     ]
     if venue_name:
@@ -781,147 +552,3 @@ def _format_recent_commentary(event: dict[str, Any]) -> list[str]:
         prefix = f"{minute}: " if minute else ""
         lines.append(f"- {escape(prefix + str(item.get('text', '')))}")
     return lines
-
-
-def _find_competitor(competitors: list[dict[str, Any]], home_away: str) -> dict[str, Any] | None:
-    for competitor in competitors:
-        if competitor.get("homeAway") == home_away:
-            return competitor
-    return None
-
-
-def _find_team_by_id(competitors: list[dict[str, Any]], team_id: str) -> dict[str, Any]:
-    for competitor in competitors:
-        team = competitor.get("team", {}) or {}
-        if str(team.get("id", "")) == team_id:
-            return team
-    return {"id": team_id}
-
-
-def _format_matchup(
-    home: dict[str, Any] | None,
-    away: dict[str, Any] | None,
-    state: str,
-) -> str:
-    home_team = (home or {}).get("team", {})
-    away_team = (away or {}).get("team", {})
-    home_name = translated_team_name_html(home_team) if home_team else "Mandante"
-    away_name = translated_team_name_html(away_team) if away_team else "Visitante"
-
-    if state == "pre":
-        return f"{home_name} x {away_name}"
-
-    home_score = (home or {}).get("score", "-")
-    away_score = (away or {}).get("score", "-")
-    return f"{home_name} {escape(str(home_score))} x {escape(str(away_score))} {away_name}"
-
-
-def format_team_roster(roster_data: dict[str, Any]) -> str:
-    team = roster_data.get("team", {})
-    team_name = translated_team_name_html(team)
-    coach = roster_data.get("coach")
-    athletes = roster_data.get("athletes", [])
-
-    lines = [f"<b>{team_name}</b>", "<b>Elenco geral</b>"]
-    coach_name = _coach_display_name(coach)
-    if coach_name:
-        lines.append(f"Técnico: {escape(str(coach_name))}")
-    lines.append("")
-
-    if not athletes:
-        lines.append("Nenhum jogador encontrado para esta seleção.")
-        return "\n".join(lines)
-
-    grouped = _group_athletes_by_position(athletes)
-    for group_name, players in grouped.items():
-        if not players:
-            continue
-        lines.append(f"<b>{group_name}</b>")
-        for player in sorted(players, key=_player_sort_key):
-            lines.append(_format_player(player))
-        lines.append("")
-    return "\n".join(lines).strip()
-
-
-def _coach_display_name(coach: Any) -> str:
-    if isinstance(coach, dict):
-        return _person_display_name(coach)
-    if isinstance(coach, list):
-        names = [_person_display_name(item) for item in coach if isinstance(item, dict)]
-        return ", ".join(name for name in names if name)
-    return ""
-
-
-def _person_display_name(person: dict[str, Any]) -> str:
-    display_name = person.get("displayName") or person.get("name")
-    if display_name:
-        return str(display_name)
-    first_name = person.get("firstName", "")
-    last_name = person.get("lastName", "")
-    return " ".join(str(part) for part in [first_name, last_name] if part).strip()
-
-
-def _group_athletes_by_position(athletes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    groups: dict[str, list[dict[str, Any]]] = {
-        "Goleiros": [],
-        "Defensores": [],
-        "Meio-campistas": [],
-        "Atacantes": [],
-        "Outros": [],
-    }
-    for athlete in athletes:
-        position = athlete.get("position", {}) or {}
-        abbreviation = str(position.get("abbreviation", "")).upper()
-        name = str(position.get("name") or position.get("displayName") or "").upper()
-        if abbreviation in {"G", "GK"} or "GOAL" in name:
-            groups["Goleiros"].append(athlete)
-        elif abbreviation in {"D", "DEF", "CB", "LB", "RB", "LWB", "RWB"} or "BACK" in name:
-            groups["Defensores"].append(athlete)
-        elif abbreviation in {"M", "MF", "CM", "DM", "AM", "LM", "RM"} or "MID" in name:
-            groups["Meio-campistas"].append(athlete)
-        elif abbreviation in {"F", "FW", "ST", "CF", "LF", "RF", "LW", "RW"} or "FORWARD" in name:
-            groups["Atacantes"].append(athlete)
-        else:
-            groups["Outros"].append(athlete)
-    return groups
-
-
-def _player_sort_key(player: dict[str, Any]) -> tuple[int, str]:
-    jersey = str(player.get("jersey") or "")
-    return (int(jersey) if jersey.isdigit() else 999, str(player.get("displayName") or ""))
-
-
-def _format_player(player: dict[str, Any]) -> str:
-    jersey = player.get("jersey")
-    name = player.get("displayName") or player.get("fullName") or "Jogador"
-    position = player.get("position", {}) or {}
-    position_abbr = position.get("abbreviation")
-    prefix = f"#{jersey} " if jersey else ""
-    suffix = f" ({position_abbr})" if position_abbr else ""
-    return f"- {escape(prefix + str(name))}{escape(str(suffix))}"
-
-
-def _translated_status(status_text: str) -> str:
-    translations = {
-        "Scheduled": "Agendado",
-        "Final": "Encerrado",
-        "First Half": "Primeiro tempo",
-        "FT": "Encerrado",
-        "FT-Pens": "Encerrado nos pênaltis",
-        "Halftime": "Intervalo",
-        "HT": "Intervalo",
-        "In Progress": "Em andamento",
-        "Second Half": "Segundo tempo",
-        "Postponed": "Adiado",
-        "Canceled": "Cancelado",
-        "Cancelled": "Cancelado",
-    }
-    return translations.get(status_text, status_text)
-
-
-def _translated_goal_type(goal_type: str) -> str:
-    translations = {
-        "Goal": "Gol",
-        "Penalty - Scored": "Pênalti convertido",
-    }
-    return translations.get(goal_type, goal_type)
