@@ -33,13 +33,13 @@ async def post_init(application: Application) -> None:
     from telegram import BotCommand
 
     commands = [
-        BotCommand("start", "Iniciar o bot e ver comandos"),
-        BotCommand("hoje", "Jogos de hoje"),
-        BotCommand("aovivo", "Partidas ao vivo"),
-        BotCommand("calendario", "Calendário de jogos por data ou seleção"),
-        BotCommand("tabela", "Classificação por grupo"),
-        BotCommand("selecoes", "Lista de seleções e elencos"),
-        BotCommand("config", "Configurar notificações ao vivo"),
+        BotCommand(command="start", description="Iniciar o bot e ver comandos"),
+        BotCommand(command="hoje", description="Jogos de hoje"),
+        BotCommand(command="aovivo", description="Partidas ao vivo"),
+        BotCommand(command="calendario", description="Calendário de jogos por data ou seleção"),
+        BotCommand(command="tabela", description="Classificação por grupo"),
+        BotCommand(command="selecoes", description="Lista de seleções e elencos"),
+        BotCommand(command="config", description="Configurar notificações ao vivo"),
     ]
     try:
         await application.bot.set_my_commands(commands)
