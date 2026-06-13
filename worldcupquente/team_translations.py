@@ -48,7 +48,11 @@ TEAM_TRANSLATIONS: dict[str, dict[str, Any]] = {
     "482": {"names": {"en": "Portugal", "pt": "Portugal"}, "emoji": "🇵🇹"},
     "4398": {"names": {"en": "Qatar", "pt": "Catar"}, "emoji": "🇶🇦"},
     "655": {"names": {"en": "Saudi Arabia", "pt": "Arábia Saudita"}, "emoji": "🇸🇦"},
-    "580": {"names": {"en": "Scotland", "pt": "Escócia"}, "emoji": "🏴"},
+    "580": {
+        "names": {"en": "Scotland", "pt": "Escócia"},
+        "emoji": "🏴",
+        "custom_emoji_id": "5388717405537053993",
+    },
     "654": {"names": {"en": "Senegal", "pt": "Senegal"}, "emoji": "🇸🇳"},
     "467": {"names": {"en": "South Africa", "pt": "África do Sul"}, "emoji": "🇿🇦"},
     "451": {"names": {"en": "South Korea", "pt": "Coreia do Sul"}, "emoji": "🇰🇷"},

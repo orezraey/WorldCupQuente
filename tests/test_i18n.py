@@ -214,3 +214,64 @@ def test_live_games_formatting_includes_blank_line_before_goals():
     rich_output = format_live_games_rich([event], ZoneInfo("UTC"), language="pt")
     assert "🏟 Estádio: BMO Field<br/><br/>⚽️ Jovo Lukic 21&#x27;" in rich_output
 
+
+def test_live_games_groups_scorer_goals_and_separates_red_cards():
+    from worldcupquente.formatters import format_live_games
+
+    event = {
+        "date": "2026-06-13T01:00:00Z",
+        "competitions": [
+            {
+                "status": {
+                    "type": {"state": "post", "shortDetail": "FT", "detail": "FT"},
+                    "displayClock": "90'+9'",
+                },
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "660", "displayName": "United States", "abbreviation": "USA"},
+                        "score": "4",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "210", "displayName": "Paraguay", "abbreviation": "PAR"},
+                        "score": "1",
+                    },
+                ],
+                "venue": {"fullName": "SoFi Stadium"},
+                "details": [
+                    {
+                        "scoringPlay": True,
+                        "ownGoal": True,
+                        "type": {"text": "Own Goal"},
+                        "clock": {"displayValue": "7'"},
+                        "athletesInvolved": [{"id": "301516", "displayName": "Damián Bobadilla"}],
+                    },
+                    {
+                        "scoringPlay": True,
+                        "clock": {"displayValue": "31'"},
+                        "athletesInvolved": [{"id": "282643", "displayName": "Folarin Balogun"}],
+                    },
+                    {
+                        "scoringPlay": True,
+                        "clock": {"displayValue": "45'+5'"},
+                        "athletesInvolved": [{"id": "282643", "displayName": "Folarin Balogun"}],
+                    },
+                    {
+                        "redCard": True,
+                        "clock": {"displayValue": "52'"},
+                        "athletesInvolved": [{"id": "123", "displayName": "Tim Ream"}],
+                    },
+                ],
+            }
+        ],
+        "scoringPlays": [],
+    }
+
+    output = format_live_games([event], ZoneInfo("UTC"), language="pt")
+
+    assert "⚽️ Damián Bobadilla 7&#x27; (GC)" in output
+    assert "⚽️ Folarin Balogun 31&#x27;, ⚽️ 45&#x27;+5&#x27;" in output
+    assert "⚽️ Folarin Balogun 31&#x27;\n⚽️ Folarin Balogun 45&#x27;+5&#x27;" not in output
+    assert "⚽️ Folarin Balogun 31&#x27;, ⚽️ 45&#x27;+5&#x27;\n\n" in output
+    assert "Tim Ream 52&#x27;" in output

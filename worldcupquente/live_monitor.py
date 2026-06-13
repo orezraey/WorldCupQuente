@@ -25,6 +25,7 @@ from worldcupquente.formatters import (
     format_penalty_notification,
     format_pre_game_notification,
     format_red_card_notification,
+    format_standings_group_table,
 )
 from worldcupquente.i18n import text
 from worldcupquente.notification_preferences import (
@@ -49,6 +50,7 @@ SEEN_FULL_TIME_IDS_KEY = "live_seen_full_time_ids"
 LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
 LIVE_MONITOR_TASK_KEY = "live_monitor_task"
 NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
+PENDING_FULL_TIME_STANDINGS_KEY = "live_pending_full_time_standings"
 PRE_GAME_NOTIFICATION_WINDOW = timedelta(minutes=5)
 
 
@@ -122,6 +124,7 @@ async def poll_live_notifications(application: Application) -> None:
         preferences,
         service,
     )
+    await _send_pending_full_time_standings(application, preferences, service)
     await _send_pre_game_notifications(
         application,
         pre_game_notifications,
@@ -324,10 +327,6 @@ async def _send_status_notifications(
         )
         full_time_html = None
         halftime_text = None
-        if notification_type == FULL_TIME_NOTIFICATION:
-            group = await _standings_group_for_event(service, event)
-        else:
-            group = None
 
         for chat_id in chat_ids:
             language = preferences.get_language(chat_id)
@@ -335,7 +334,7 @@ async def _send_status_notifications(
                 full_time_html = format_full_time_notification_rich(
                     event,
                     service.bot_timezone,
-                    group,
+                    None,
                     language,
                 )
             else:
@@ -375,6 +374,55 @@ async def _send_status_notifications(
                     "Failed to send game status notification",
                     extra={"chat_id": chat_id, "notification_type": notification_type},
                 )
+        if notification_type == FULL_TIME_NOTIFICATION and chat_ids:
+            event_id = str(event.get("id", ""))
+            if event_id:
+                _pending_full_time_standings(application)[event_id] = event
+
+
+async def _send_pending_full_time_standings(
+    application: Application,
+    preferences: NotificationPreferences,
+    service: WorldCupService,
+) -> None:
+    pending = _pending_full_time_standings(application)
+    for event_id, event in list(pending.items()):
+        chat_ids = preferences.enabled_chat_ids(
+            FULL_TIME_NOTIFICATION,
+            service.settings.live_notification_chat_ids,
+            _event_team_ids(event),
+        )
+        if not chat_ids:
+            pending.pop(event_id, None)
+            continue
+
+        group = await _updated_standings_group_for_event(service, event)
+        if group is None:
+            continue
+
+        failed = False
+        for chat_id in chat_ids:
+            language = preferences.get_language(chat_id)
+            try:
+                await application.bot.do_api_request(
+                    "sendRichMessage",
+                    api_kwargs={
+                        "chat_id": chat_id,
+                        "rich_message": {
+                            "html": format_standings_group_table(group, language),
+                            "skip_entity_detection": True,
+                        },
+                    },
+                )
+            except Exception:
+                failed = True
+                logger.exception("Failed to send updated full-time standings")
+        if not failed:
+            pending.pop(event_id, None)
+
+
+def _pending_full_time_standings(application: Application) -> dict[str, dict[str, Any]]:
+    return application.bot_data.setdefault(PENDING_FULL_TIME_STANDINGS_KEY, {})
 
 
 async def _send_pre_game_notifications(
@@ -434,7 +482,7 @@ async def _hydrate_notification_event(
     return event_from_summary(summary, fallback_event=event)
 
 
-async def _standings_group_for_event(
+async def _updated_standings_group_for_event(
     service: WorldCupService,
     event: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -452,8 +500,84 @@ async def _standings_group_for_event(
             str(((entry.get("team") or {}).get("id")) or "")
             for entry in (group.get("standings") or {}).get("entries", [])
         }
-        if team_ids.issubset(group_team_ids):
+        if team_ids.issubset(group_team_ids) and _standings_group_matches_event(group, event):
             return group
+    return None
+
+
+def _standings_group_matches_event(group: dict[str, Any], event: dict[str, Any]) -> bool:
+    event_records = _event_total_records(event)
+    if not event_records:
+        return False
+
+    standings_records = _standings_total_records(group)
+    return all(standings_records.get(team_id) == record for team_id, record in event_records.items())
+
+
+def _event_total_records(event: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
+    competition = (event.get("competitions") or [{}])[0]
+    records: dict[str, tuple[int, int, int, int]] = {}
+    for competitor in competition.get("competitors", []):
+        team_id = str(((competitor.get("team") or {}).get("id")) or "")
+        if not team_id:
+            continue
+        record = _competitor_total_record(competitor)
+        if record is None:
+            return {}
+        records[team_id] = record
+    return records
+
+
+def _competitor_total_record(competitor: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    for record in competitor.get("records", []):
+        record_type = str(record.get("type") or "").lower()
+        record_name = str(record.get("name") or "").lower()
+        record_abbreviation = str(record.get("abbreviation") or "").lower()
+        if record_type != "total" and record_name != "all splits" and record_abbreviation != "total":
+            continue
+        return _parse_total_record(record.get("summary") or record.get("displayValue"))
+    return None
+
+
+def _parse_total_record(value: Any) -> tuple[int, int, int, int] | None:
+    parts = str(value or "").split("-")
+    if len(parts) != 3:
+        return None
+    try:
+        wins, draws, losses = (int(part) for part in parts)
+    except ValueError:
+        return None
+    return (wins + draws + losses, wins, draws, losses)
+
+
+def _standings_total_records(group: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
+    records: dict[str, tuple[int, int, int, int]] = {}
+    for entry in (group.get("standings") or {}).get("entries", []):
+        team_id = str(((entry.get("team") or {}).get("id")) or "")
+        if not team_id:
+            continue
+        stats = entry.get("stats", [])
+        games_played = _standings_int_stat(stats, "gamesPlayed")
+        wins = _standings_int_stat(stats, "wins")
+        draws = _standings_int_stat(stats, "ties")
+        losses = _standings_int_stat(stats, "losses")
+        if None in (games_played, wins, draws, losses):
+            continue
+        records[team_id] = (games_played, wins, draws, losses)
+    return records
+
+
+def _standings_int_stat(stats: list[dict[str, Any]], name: str) -> int | None:
+    for stat in stats:
+        if stat.get("name") != name:
+            continue
+        value = stat.get("value")
+        if value is None or value == "":
+            value = stat.get("displayValue")
+        try:
+            return int(float(str(value).replace("+", "")))
+        except (TypeError, ValueError):
+            return None
     return None
 
 
@@ -477,7 +601,21 @@ def _is_halftime_event(event: dict[str, Any]) -> bool:
 def _is_full_time_event(event: dict[str, Any]) -> bool:
     status = _event_status(event)
     status_type = status.get("type") or {}
-    return status_type.get("state") == "post" or status_type.get("completed") is True
+    if status_type.get("state") != "post" and status_type.get("completed") is not True:
+        return False
+    return not _is_extra_time_or_penalties_status(status)
+
+
+def _is_extra_time_or_penalties_status(status: dict[str, Any]) -> bool:
+    for part in _status_text_parts(status):
+        normalized = part.upper().replace("-", " ")
+        if "FINAL" in normalized or normalized.startswith("FT") or normalized == "AET":
+            continue
+        if "EXTRA TIME" in normalized or normalized in {"ET", "1ET", "2ET"}:
+            return True
+        if "PENALT" in normalized or "PENS" in normalized or "SHOOTOUT" in normalized:
+            return True
+    return False
 
 
 def _is_pre_game_event(event: dict[str, Any]) -> bool:

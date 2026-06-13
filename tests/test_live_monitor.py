@@ -9,12 +9,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.live_monitor import (
+    PENDING_FULL_TIME_STANDINGS_KEY,
     LiveMonitorState,
     _collect_live_notifications,
     _collect_pre_game_notifications,
     _collect_status_notifications,
     _play_match_key,
     _send_incident_notifications,
+    _send_pending_full_time_standings,
+    _send_status_notifications,
 )
 from worldcupquente.notification_preferences import (
     FULL_TIME_NOTIFICATION,
@@ -126,6 +129,26 @@ def test_collect_status_notifications_hydrates_full_time_event():
     assert state.seen_full_time_ids == {"match-1"}
 
 
+def test_collect_status_notifications_ignores_extra_time_or_penalties():
+    for short_detail in ("Extra Time", "Penalties"):
+        state = LiveMonitorState(
+            seen_goal_ids=set(),
+            seen_penalty_ids=set(),
+            seen_red_card_ids=set(),
+            seen_pre_game_ids=set(),
+            seen_halftime_ids=set(),
+            seen_full_time_ids=set(),
+            score_snapshots={},
+            is_bootstrapped=True,
+        )
+        event = _status_event("post", short_detail=short_detail, completed=True)
+
+        notifications = asyncio.run(_collect_status_notifications([event], state, _FakeService()))
+
+        assert notifications == []
+        assert state.seen_full_time_ids == set()
+
+
 def test_collect_pre_game_notifications_within_five_minutes_once():
     state = LiveMonitorState(
         seen_goal_ids=set(),
@@ -184,6 +207,37 @@ def test_send_incident_notifications_suppresses_penalty_when_goal_enabled():
     )
 
     assert [message["chat_id"] for message in app.bot.messages] == [2]
+
+
+def test_full_time_summary_sends_before_standings_are_updated():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_with_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+
+    assert len(app.bot.rich_messages) == 2
+    assert all("<table" not in message["rich_message"]["html"] for message in app.bot.rich_messages)
+    assert app.bot.rich_messages[0]["chat_id"] == 1
+    assert app.bot.rich_messages[1]["chat_id"] == 2
+    assert set(app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY]) == {"match-1"}
+
+
+def test_pending_full_time_standings_send_after_records_match():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_with_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+    service.groups = [_standings_group(usa_record=(1, 1, 0, 0), par_record=(1, 0, 0, 1))]
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+
+    table_messages = [message for message in app.bot.rich_messages if "<table" in message["rich_message"]["html"]]
+    assert [message["chat_id"] for message in table_messages] == [1, 2]
+    assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
 
 
 def _event_with_score(
@@ -248,6 +302,71 @@ def _status_event(
     }
 
 
+def _full_time_event_with_records() -> dict[str, Any]:
+    return {
+        "id": "match-1",
+        "date": "2026-06-13T01:00:00Z",
+        "competitions": [
+            {
+                "status": {
+                    "displayClock": "90'+9'",
+                    "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+                },
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "660", "displayName": "United States", "abbreviation": "USA"},
+                        "score": "4",
+                        "records": [{"type": "total", "summary": "1-0-0"}],
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "210", "displayName": "Paraguay", "abbreviation": "PAR"},
+                        "score": "1",
+                        "records": [{"type": "total", "summary": "0-0-1"}],
+                    },
+                ],
+                "venue": {"fullName": "SoFi Stadium"},
+            }
+        ],
+        "scoringPlays": [],
+    }
+
+
+def _standings_group(
+    usa_record: tuple[int, int, int, int],
+    par_record: tuple[int, int, int, int],
+) -> dict[str, Any]:
+    return {
+        "id": "4",
+        "name": "Group D",
+        "standings": {
+            "entries": [
+                _standings_entry("660", "United States", usa_record),
+                _standings_entry("210", "Paraguay", par_record),
+            ]
+        },
+    }
+
+
+def _standings_entry(team_id: str, team_name: str, record: tuple[int, int, int, int]) -> dict[str, Any]:
+    games_played, wins, draws, losses = record
+    return {
+        "team": {"id": team_id, "displayName": team_name},
+        "stats": [
+            {"name": "rank", "displayValue": "1"},
+            {"name": "gamesPlayed", "value": games_played},
+            {"name": "wins", "value": wins},
+            {"name": "ties", "value": draws},
+            {"name": "losses", "value": losses},
+            {"name": "points", "value": wins * 3 + draws},
+            {"name": "pointsFor", "value": 0},
+            {"name": "pointsAgainst", "value": 0},
+            {"name": "pointDifferential", "value": 0},
+        ],
+    }
+
+
 @dataclass
 class _FakeSettings:
     live_notification_chat_ids: tuple[int, ...] = (1, 2)
@@ -256,6 +375,9 @@ class _FakeSettings:
 class _FakeService:
     settings = _FakeSettings()
     bot_timezone = ZoneInfo("UTC")
+
+    def __init__(self, groups: list[dict[str, Any]] | None = None) -> None:
+        self.groups = groups or []
 
     async def get_event_summary(self, event_id: str) -> dict[str, Any]:
         return {
@@ -270,6 +392,10 @@ class _FakeService:
             },
             "boxscore": {"teams": []},
         }
+
+    async def get_standings_groups(self, use_cache: bool = True) -> list[dict[str, Any]]:
+        del use_cache
+        return self.groups
 
 
 class _FakePreferences:
@@ -295,11 +421,16 @@ class _FakePreferences:
 class _FakeApplication:
     def __init__(self) -> None:
         self.bot = _FakeBot()
+        self.bot_data: dict[str, Any] = {}
 
 
 class _FakeBot:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
+        self.rich_messages: list[dict[str, Any]] = []
 
     async def send_message(self, **kwargs: Any) -> None:
         self.messages.append(kwargs)
+
+    async def do_api_request(self, _method: str, api_kwargs: dict[str, Any]) -> None:
+        self.rich_messages.append(api_kwargs)

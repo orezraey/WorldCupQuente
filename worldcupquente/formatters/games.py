@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.event_incidents import (
+    is_own_goal_play,
     red_cards_from_event,
     scoring_plays_from_event,
 )
@@ -203,8 +204,7 @@ def _format_live_event(
 
     red_card_lines = _format_live_red_cards(event, language)
     if red_card_lines:
-        if not goal_lines:
-            lines.append("")
+        lines.append("")
         lines.extend(red_card_lines)
 
     if not show_stats:
@@ -248,7 +248,8 @@ def _format_live_goals(event: dict[str, Any], language: str = "en") -> list[str]
     if not goals:
         return []
 
-    lines: list[str] = []
+    grouped_goals: list[dict[str, Any]] = []
+    grouped_by_scorer: dict[str, dict[str, Any]] = {}
     for goal in goals:
         athletes = goal.get("athletesInvolved") or [
             participant.get("athlete") or {}
@@ -258,8 +259,34 @@ def _format_live_goals(event: dict[str, Any], language: str = "en") -> list[str]
         scorer = (athletes or [{}])[0]
         scorer_name = scorer.get("displayName") or scorer.get("fullName") or text("scorer_unavailable", language)
         minute = (goal.get("clock") or {}).get("displayValue") or text("minute_unavailable", language)
-        lines.append(f"⚽️ {escape(str(scorer_name))} {escape(str(minute))}")
-    return lines
+        scorer_key = str(scorer.get("id") or scorer_name)
+        if scorer_key not in grouped_by_scorer:
+            grouped_by_scorer[scorer_key] = {
+                "scorer_name": scorer_name,
+                "goals": [],
+            }
+            grouped_goals.append(grouped_by_scorer[scorer_key])
+        grouped_by_scorer[scorer_key]["goals"].append(
+            {
+                "minute": minute,
+                "own_goal": is_own_goal_play(goal),
+            }
+        )
+
+    return [_format_grouped_goal_line(group, language) for group in grouped_goals]
+
+
+def _format_grouped_goal_line(group: dict[str, Any], language: str = "en") -> str:
+    scorer_name = escape(str(group["scorer_name"]))
+    goal_parts = []
+    for index, goal in enumerate(group["goals"]):
+        minute = escape(str(goal["minute"]))
+        own_goal_suffix = f" ({text('own_goal_suffix', language)})" if goal["own_goal"] else ""
+        if index == 0:
+            goal_parts.append(f"⚽️ {scorer_name} {minute}{own_goal_suffix}")
+        else:
+            goal_parts.append(f"⚽️ {minute}{own_goal_suffix}")
+    return ", ".join(goal_parts)
 
 
 def _format_live_team_stats(

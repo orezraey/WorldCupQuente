@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.espn_events import parse_espn_datetime
+from worldcupquente.event_incidents import is_own_goal_play
 from worldcupquente.formatters.games import _format_live_event
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
@@ -81,7 +82,7 @@ def format_goal_notification(
     status = competition.get("status") or event.get("status") or {}
     state = (status.get("type") or {}).get("state", "in")
 
-    header_key = "own_goal_header" if detail.get("ownGoal") else "goal_header"
+    header_key = "own_goal_header" if is_own_goal_play(detail) else "goal_header"
     header = f"⚽️ <b>{text(header_key, language)}</b>"
 
     lines = [

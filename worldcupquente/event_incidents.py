@@ -45,6 +45,21 @@ def red_cards_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     return _dedupe_player_events(red_cards)
 
 
+def is_own_goal_play(play: dict[str, Any]) -> bool:
+    if play.get("ownGoal") is True:
+        return True
+    play_type = play.get("type") or {}
+    text = " ".join(
+        str(part or "")
+        for part in [
+            play_type.get("type"),
+            play_type.get("text"),
+            play.get("text"),
+        ]
+    ).lower()
+    return "own goal" in text
+
+
 def _dedupe_goal_plays(plays: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
