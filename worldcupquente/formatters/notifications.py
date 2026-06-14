@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.event_incidents import is_own_goal_play
-from worldcupquente.formatters.games import _format_live_event
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
     RED_CARD_EMOJI,
@@ -21,7 +20,14 @@ from worldcupquente.team_translations import translated_team_name_html
 
 
 def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
-    return "\n".join(_format_live_event(event, tz, show_stats=False, language=language))
+    status = (event.get("competitions") or [{}])[0].get("status") or event.get("status") or {}
+    status_type = status.get("type") or {}
+    header_key = (
+        "second_half_end_header"
+        if status_type.get("state") == "post" or status_type.get("completed") is True
+        else "first_half_end_header"
+    )
+    return "\n".join(_format_period_end_lines(event, tz, header_key, language))
 
 
 def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
@@ -51,10 +57,36 @@ def format_full_time_notification_rich(
     group: dict[str, Any] | None,
     language: str = "en",
 ) -> str:
-    blocks = [_rich_paragraph(_format_live_event(event, tz, show_stats=False, language=language))]
+    blocks = [_rich_paragraph(_format_period_end_lines(event, tz, "second_half_end_header", language))]
     if group is not None:
         blocks.append(format_standings_group_table(group, language))
     return "".join(blocks)
+
+
+def _format_period_end_lines(
+    event: dict[str, Any],
+    tz: ZoneInfo,
+    header_key: str,
+    language: str,
+) -> list[str]:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    venue = competition.get("venue", {}) or event.get("venue", {})
+    venue_name = venue.get("fullName") or venue.get("displayName")
+
+    lines = [
+        f"<b>⏰ {text(header_key, language)}</b>",
+        "",
+        f"⚽️ {_format_matchup(home, away, 'pre', language)}",
+    ]
+    if event_time:
+        lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
+    if venue_name:
+        lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+    return lines
 
 
 def _rich_paragraph(lines: list[str]) -> str:

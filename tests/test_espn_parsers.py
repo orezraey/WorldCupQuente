@@ -207,6 +207,57 @@ def test_penalty_plays_from_event():
     assert penalties[0]["clock"]["displayValue"] == "60'"
 
 
+def test_penalty_plays_deduplicates_same_minute_variants():
+    event = {
+        "competitions": [
+            {
+                "details": [
+                    {
+                        "type": {"type": "penalty", "text": "Penalty"},
+                        "team": {"id": "home"},
+                        "clock": {"displayValue": "14'"},
+                        "text": "Penalty conceded by Mahmoud Abunada after a foul in the penalty area.",
+                    },
+                    {
+                        "type": {"type": "penalty", "text": "Penalty"},
+                        "team": {"id": "away"},
+                        "clock": {"displayValue": "14'"},
+                        "text": "Penalty Switzerland. Remo Freuler draws a foul in the penalty area.",
+                    },
+                ]
+            }
+        ],
+        "scoringPlays": [],
+    }
+
+    penalties = penalty_plays_from_event(event)
+
+    assert len(penalties) == 1
+    assert penalties[0]["team"]["id"] == "away"
+
+
+def test_penalty_plays_ignores_converted_penalty_goal():
+    event = {
+        "competitions": [
+            {
+                "details": [
+                    {
+                        "id": "goal-1",
+                        "scoringPlay": True,
+                        "type": {"type": "goal", "text": "Penalty Kick"},
+                        "team": {"id": "away"},
+                        "clock": {"displayValue": "17'"},
+                        "text": "Goal! Qatar 0, Switzerland 1. Breel Embolo converts the penalty.",
+                    }
+                ]
+            }
+        ],
+        "scoringPlays": [],
+    }
+
+    assert penalty_plays_from_event(event) == []
+
+
 def test_red_cards_from_event_details():
     event = {
         "competitions": [

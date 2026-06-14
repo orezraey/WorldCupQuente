@@ -51,6 +51,7 @@ LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
 LIVE_MONITOR_TASK_KEY = "live_monitor_task"
 NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
 PENDING_FULL_TIME_STANDINGS_KEY = "live_pending_full_time_standings"
+STANDINGS_SNAPSHOTS_KEY = "live_standings_snapshots"
 PRE_GAME_NOTIFICATION_WINDOW = timedelta(minutes=5)
 
 
@@ -104,6 +105,8 @@ async def poll_live_notifications(application: Application) -> None:
         status_events = []
 
     state = _live_monitor_state(application)
+
+    await _remember_active_standings_snapshots(application, status_events, service)
 
     notifications, penalty_goal_keys = _collect_live_notifications(live_events, state)
     pre_game_notifications = _collect_pre_game_notifications(status_events, state)
@@ -161,9 +164,9 @@ def _live_monitor_state(application: Application) -> LiveMonitorState:
 def _collect_live_notifications(
     live_events: list[dict[str, Any]],
     state: LiveMonitorState,
-) -> tuple[list[tuple[str, dict[str, Any], dict[str, Any]]], set[tuple[str, str, str, str]]]:
+) -> tuple[list[tuple[str, dict[str, Any], dict[str, Any]]], set[tuple[str, str, str]]]:
     notifications: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
-    scored_penalty_goal_keys: set[tuple[str, str, str, str]] = set()
+    scored_penalty_goal_keys: set[tuple[str, str, str]] = set()
     is_bootstrapped = state.is_bootstrapped
     seen_goal_ids = state.seen_goal_ids
     seen_penalty_ids = state.seen_penalty_ids
@@ -277,7 +280,7 @@ def _mark_bootstrapped(application: Application, state: LiveMonitorState) -> Non
 async def _send_incident_notifications(
     application: Application,
     notifications: list[tuple[str, dict[str, Any], dict[str, Any]]],
-    scored_penalty_goal_keys: set[tuple[str, str, str, str]],
+    scored_penalty_goal_keys: set[tuple[str, str, str]],
     preferences: NotificationPreferences,
     service: WorldCupService,
 ) -> None:
@@ -325,6 +328,16 @@ async def _send_status_notifications(
             service.settings.live_notification_chat_ids,
             _event_team_ids(event),
         )
+        pending_payload = None
+        if notification_type == FULL_TIME_NOTIFICATION and chat_ids:
+            initial_group = await _standings_group_for_event(service, event)
+            event_id = str(event.get("id", ""))
+            standings_snapshot = _standings_snapshots(application).get(event_id, {})
+            pending_payload = {
+                "event": event,
+                "initial_records": standings_snapshot
+                or (_standings_total_records(initial_group) if initial_group else {}),
+            }
         full_time_html = None
         halftime_text = None
 
@@ -377,7 +390,10 @@ async def _send_status_notifications(
         if notification_type == FULL_TIME_NOTIFICATION and chat_ids:
             event_id = str(event.get("id", ""))
             if event_id:
-                _pending_full_time_standings(application)[event_id] = event
+                _pending_full_time_standings(application)[event_id] = pending_payload or {
+                    "event": event,
+                    "initial_records": {},
+                }
 
 
 async def _send_pending_full_time_standings(
@@ -386,7 +402,9 @@ async def _send_pending_full_time_standings(
     service: WorldCupService,
 ) -> None:
     pending = _pending_full_time_standings(application)
-    for event_id, event in list(pending.items()):
+    for event_id, pending_item in list(pending.items()):
+        event = pending_item.get("event", {})
+        initial_records = pending_item.get("initial_records", {})
         chat_ids = preferences.enabled_chat_ids(
             FULL_TIME_NOTIFICATION,
             service.settings.live_notification_chat_ids,
@@ -394,9 +412,10 @@ async def _send_pending_full_time_standings(
         )
         if not chat_ids:
             pending.pop(event_id, None)
+            _standings_snapshots(application).pop(event_id, None)
             continue
 
-        group = await _updated_standings_group_for_event(service, event)
+        group = await _updated_standings_group_for_event(service, event, initial_records)
         if group is None:
             continue
 
@@ -419,10 +438,40 @@ async def _send_pending_full_time_standings(
                 logger.exception("Failed to send updated full-time standings")
         if not failed:
             pending.pop(event_id, None)
+            _standings_snapshots(application).pop(event_id, None)
 
 
 def _pending_full_time_standings(application: Application) -> dict[str, dict[str, Any]]:
     return application.bot_data.setdefault(PENDING_FULL_TIME_STANDINGS_KEY, {})
+
+
+def _standings_snapshots(application: Application) -> dict[str, dict[str, tuple[int, int, int, int]]]:
+    return application.bot_data.setdefault(STANDINGS_SNAPSHOTS_KEY, {})
+
+
+async def _remember_active_standings_snapshots(
+    application: Application,
+    status_events: list[dict[str, Any]],
+    service: WorldCupService,
+) -> None:
+    active_events = [event for event in status_events if _is_in_progress_event(event)]
+    if not active_events:
+        return
+    try:
+        groups = await service.get_standings_groups(use_cache=False)
+    except Exception:
+        logger.warning("Failed to fetch standings snapshots")
+        return
+
+    snapshots = _standings_snapshots(application)
+    for event in active_events:
+        event_id = str(event.get("id", ""))
+        if not event_id or event_id in snapshots:
+            continue
+        group = _standings_group_from_groups(groups, event)
+        records = _standings_total_records(group) if group is not None else {}
+        if records:
+            snapshots[event_id] = records
 
 
 async def _send_pre_game_notifications(
@@ -485,6 +534,21 @@ async def _hydrate_notification_event(
 async def _updated_standings_group_for_event(
     service: WorldCupService,
     event: dict[str, Any],
+    initial_records: dict[str, tuple[int, int, int, int]] | None = None,
+) -> dict[str, Any] | None:
+    group = await _standings_group_for_event(service, event)
+    if group is None:
+        return None
+    if _standings_group_matches_event(group, event):
+        return group
+    if initial_records and _standings_group_matches_snapshot_update(group, event, initial_records):
+        return group
+    return None
+
+
+async def _standings_group_for_event(
+    service: WorldCupService,
+    event: dict[str, Any],
 ) -> dict[str, Any] | None:
     team_ids = _event_team_ids(event)
     if not team_ids:
@@ -495,12 +559,23 @@ async def _updated_standings_group_for_event(
         logger.warning("Failed to fetch standings for full-time notification")
         return None
 
+    return _standings_group_from_groups(groups, event)
+
+
+def _standings_group_from_groups(
+    groups: list[dict[str, Any]],
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    team_ids = _event_team_ids(event)
+    if not team_ids:
+        return None
+
     for group in groups:
         group_team_ids = {
             str(((entry.get("team") or {}).get("id")) or "")
             for entry in (group.get("standings") or {}).get("entries", [])
         }
-        if team_ids.issubset(group_team_ids) and _standings_group_matches_event(group, event):
+        if team_ids.issubset(group_team_ids):
             return group
     return None
 
@@ -512,6 +587,62 @@ def _standings_group_matches_event(group: dict[str, Any], event: dict[str, Any])
 
     standings_records = _standings_total_records(group)
     return all(standings_records.get(team_id) == record for team_id, record in event_records.items())
+
+
+def _standings_group_matches_snapshot_update(
+    group: dict[str, Any],
+    event: dict[str, Any],
+    initial_records: dict[str, tuple[int, int, int, int]],
+) -> bool:
+    event_record_deltas = _event_record_deltas(event)
+    if not event_record_deltas:
+        return False
+
+    standings_records = _standings_total_records(group)
+    for team_id, delta in event_record_deltas.items():
+        initial_record = initial_records.get(team_id)
+        current_record = standings_records.get(team_id)
+        if initial_record is None or current_record is None:
+            return False
+        expected_record = tuple(initial + added for initial, added in zip(initial_record, delta, strict=True))
+        if current_record != expected_record:
+            return False
+    return True
+
+
+def _event_record_deltas(event: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    if len(competitors) != 2:
+        return {}
+
+    scores: list[tuple[str, int]] = []
+    for competitor in competitors:
+        team_id = str(((competitor.get("team") or {}).get("id")) or "")
+        if not team_id:
+            return {}
+        try:
+            score = int(competitor.get("score"))
+        except (TypeError, ValueError):
+            return {}
+        scores.append((team_id, score))
+
+    first_team_id, first_score = scores[0]
+    second_team_id, second_score = scores[1]
+    if first_score == second_score:
+        return {
+            first_team_id: (1, 0, 1, 0),
+            second_team_id: (1, 0, 1, 0),
+        }
+    if first_score > second_score:
+        return {
+            first_team_id: (1, 1, 0, 0),
+            second_team_id: (1, 0, 0, 1),
+        }
+    return {
+        first_team_id: (1, 0, 0, 1),
+        second_team_id: (1, 1, 0, 0),
+    }
 
 
 def _event_total_records(event: dict[str, Any]) -> dict[str, tuple[int, int, int, int]]:
@@ -606,6 +737,12 @@ def _is_full_time_event(event: dict[str, Any]) -> bool:
     return not _is_extra_time_or_penalties_status(status)
 
 
+def _is_in_progress_event(event: dict[str, Any]) -> bool:
+    status = _event_status(event)
+    status_type = status.get("type") or {}
+    return status_type.get("state") == "in"
+
+
 def _is_extra_time_or_penalties_status(status: dict[str, Any]) -> bool:
     for part in _status_text_parts(status):
         normalized = part.upper().replace("-", " ")
@@ -670,6 +807,9 @@ def _goal_id(event: dict[str, Any], detail: dict[str, Any]) -> str:
 
 
 def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[str, Any]) -> str:
+    if notification_type == PENALTY_NOTIFICATION:
+        return _penalty_event_id(event, detail)
+
     athletes = detail.get("athletesInvolved") or [
         participant.get("athlete") or {}
         for participant in detail.get("participants", [])
@@ -702,6 +842,17 @@ def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[s
     )
 
 
+def _penalty_event_id(event: dict[str, Any], detail: dict[str, Any]) -> str:
+    clock = detail.get("clock") or {}
+    return ":".join(
+        [
+            PENALTY_NOTIFICATION,
+            str(event.get("id", "")),
+            str(clock.get("displayValue") or clock.get("value") or detail.get("id") or ""),
+        ]
+    )
+
+
 def _is_penalty_detail(detail: dict[str, Any]) -> bool:
     detail_type = detail.get("type") or {}
     text = " ".join(
@@ -715,12 +866,11 @@ def _is_penalty_detail(detail: dict[str, Any]) -> bool:
     return "penalty" in text
 
 
-def _play_match_key(event: dict[str, Any], detail: dict[str, Any]) -> tuple[str, str, str, str]:
+def _play_match_key(event: dict[str, Any], detail: dict[str, Any]) -> tuple[str, str, str]:
     clock = detail.get("clock") or {}
     team = detail.get("team") or {}
     return (
         str(event.get("id", "")),
-        str(detail.get("id", "")),
         str(team.get("id", "")),
         str(clock.get("value") or clock.get("displayValue") or ""),
     )

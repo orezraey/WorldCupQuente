@@ -152,6 +152,8 @@ TEXT: dict[str, dict[str, str]] = {
         "red_card_header": "Red card at the World Cup!",
         "pre_game_header": "Game starts in about 5 minutes!",
         "pre_game_body": "Kickoff is in about 5 minutes.",
+        "first_half_end_header": "End of First Half",
+        "second_half_end_header": "End of Second Half",
         "full_time_fallback": "Group standings are available in /standings.",
     },
     "pt": {
@@ -299,6 +301,8 @@ TEXT: dict[str, dict[str, str]] = {
         "red_card_header": "Cartão vermelho na Copa do Mundo!",
         "pre_game_header": "Jogo começando em cerca de 5 minutos!",
         "pre_game_body": "A bola rola em cerca de 5 minutos.",
+        "first_half_end_header": "Final do Primeiro Tempo",
+        "second_half_end_header": "Final do Segundo Tempo",
         "full_time_fallback": "Tabela do grupo disponível em /tabela.",
     },
 }

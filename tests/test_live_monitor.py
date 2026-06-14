@@ -10,11 +10,13 @@ from zoneinfo import ZoneInfo
 
 from worldcupquente.live_monitor import (
     PENDING_FULL_TIME_STANDINGS_KEY,
+    STANDINGS_SNAPSHOTS_KEY,
     LiveMonitorState,
     _collect_live_notifications,
     _collect_pre_game_notifications,
     _collect_status_notifications,
     _play_match_key,
+    _remember_active_standings_snapshots,
     _send_incident_notifications,
     _send_pending_full_time_standings,
     _send_status_notifications,
@@ -22,6 +24,7 @@ from worldcupquente.live_monitor import (
 from worldcupquente.notification_preferences import (
     FULL_TIME_NOTIFICATION,
     GOAL_NOTIFICATION,
+    HALFTIME_NOTIFICATION,
     PENALTY_NOTIFICATION,
     PRE_GAME_NOTIFICATION,
 )
@@ -68,7 +71,7 @@ def test_collect_live_notifications_deduplicates_seen_score_change():
     assert second_notifications == []
 
 
-def test_collect_live_notifications_tracks_penalty_goal_key():
+def test_collect_live_notifications_sends_only_goal_for_converted_penalty():
     state = LiveMonitorState(
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
@@ -84,8 +87,46 @@ def test_collect_live_notifications_tracks_penalty_goal_key():
 
     notifications, penalty_goal_keys = _collect_live_notifications([event], state)
 
-    assert len(notifications) == 2
+    assert [notification[0] for notification in notifications] == [GOAL_NOTIFICATION]
     assert _play_match_key(event, detail) in penalty_goal_keys
+
+
+def test_collect_live_notifications_deduplicates_penalty_text_updates():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    first_event = _event_with_score(
+        score=(0, 0),
+        details=[
+            _penalty_detail(
+                play_id="penalty-1",
+                text="Penalty Switzerland. Remo Freuler draws a foul in the penalty area.",
+            )
+        ],
+    )
+    second_event = _event_with_score(
+        score=(0, 0),
+        details=[
+            _penalty_detail(
+                play_id="penalty-2",
+                text="Penalty Switzerland. Remo Freuler draws a foul in the penalty area after review.",
+            )
+        ],
+    )
+
+    first_notifications, _ = _collect_live_notifications([first_event], state)
+    second_notifications, _ = _collect_live_notifications([second_event], state)
+
+    assert [notification[0] for notification in first_notifications] == [PENALTY_NOTIFICATION]
+    assert second_notifications == []
+    assert len(state.seen_penalty_ids) == 1
 
 
 def test_collect_status_notifications_bootstrap_records_without_sending():
@@ -209,6 +250,58 @@ def test_send_incident_notifications_suppresses_penalty_when_goal_enabled():
     assert [message["chat_id"] for message in app.bot.messages] == [2]
 
 
+def test_send_incident_notifications_suppresses_separate_penalty_award_when_goal_enabled():
+    goal_detail = _goal_detail(play_type={"id": "70", "text": "Penalty Kick"})
+    penalty_detail = _penalty_detail(team_id="home", clock_value=12, clock_display="12'")
+    event = _event_with_score(score=(1, 0), details=[goal_detail, penalty_detail])
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: False})
+    service = _FakeService()
+
+    asyncio.run(
+        _send_incident_notifications(
+            app,
+            [(PENALTY_NOTIFICATION, event, penalty_detail)],
+            {_play_match_key(event, goal_detail)},
+            preferences,
+            service,
+        )
+    )
+
+    assert [message["chat_id"] for message in app.bot.messages] == [2]
+
+
+def test_status_notifications_use_period_end_format_in_portuguese():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "HT")
+
+    asyncio.run(_send_status_notifications(app, [(HALFTIME_NOTIFICATION, event)], preferences, service))
+
+    assert app.bot.messages[0]["text"] == (
+        "<b>⏰ Final do Primeiro Tempo</b>\n\n"
+        "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão\n"
+        "🕒 14/06 17:00\n"
+        "🏟 Estádio: AT&amp;T Stadium"
+    )
+
+
+def test_full_time_notifications_use_second_half_end_format_in_portuguese():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("post", "FT", completed=True)
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    html = app.bot.rich_messages[0]["rich_message"]["html"]
+    assert "<b>⏰ Final do Segundo Tempo</b>" in html
+    assert "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão" in html
+    assert "🕒 14/06 17:00" in html
+    assert "🏟 Estádio: AT&amp;T Stadium" in html
+
+
 def test_full_time_summary_sends_before_standings_are_updated():
     app = _FakeApplication()
     preferences = _FakePreferences(goal_enabled={1: True, 2: True})
@@ -238,6 +331,39 @@ def test_pending_full_time_standings_send_after_records_match():
     table_messages = [message for message in app.bot.rich_messages if "<table" in message["rich_message"]["html"]]
     assert [message["chat_id"] for message in table_messages] == [1, 2]
     assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
+
+
+def test_pending_full_time_standings_send_after_snapshot_update_without_event_records():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_without_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+    service.groups = [_standings_group(usa_record=(1, 1, 0, 0), par_record=(1, 0, 0, 1))]
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+
+    table_messages = [message for message in app.bot.rich_messages if "<table" in message["rich_message"]["html"]]
+    assert [message["chat_id"] for message in table_messages] == [1, 2]
+    assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
+
+
+def test_pending_full_time_standings_send_when_api_already_updated_using_active_snapshot():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_remember_active_standings_snapshots(app, [_in_progress_event_without_records()], service))
+    service.groups = [_standings_group(usa_record=(1, 1, 0, 0), par_record=(1, 0, 0, 1))]
+    asyncio.run(
+        _send_status_notifications(app, [(FULL_TIME_NOTIFICATION, _full_time_event_without_records())], preferences, service)
+    )
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+
+    table_messages = [message for message in app.bot.rich_messages if "<table" in message["rich_message"]["html"]]
+    assert [message["chat_id"] for message in table_messages] == [1, 2]
+    assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
+    assert app.bot_data[STANDINGS_SNAPSHOTS_KEY] == {}
 
 
 def _event_with_score(
@@ -273,6 +399,23 @@ def _goal_detail(play_type: dict[str, str] | None = None) -> dict[str, Any]:
     }
 
 
+def _penalty_detail(
+    play_id: str = "penalty-1",
+    text: str = "Penalty awarded",
+    team_id: str = "away",
+    clock_value: int = 14,
+    clock_display: str = "14'",
+) -> dict[str, Any]:
+    return {
+        "id": play_id,
+        "team": {"id": team_id},
+        "clock": {"value": clock_value, "displayValue": clock_display},
+        "type": {"id": "81", "type": "penalty", "text": "Penalty"},
+        "athletesInvolved": [{"id": "player-2", "displayName": "Player Two"}],
+        "text": text,
+    }
+
+
 def _status_event(
     state: str,
     short_detail: str | None = None,
@@ -297,6 +440,38 @@ def _status_event(
                     {"team": {"id": "home"}},
                     {"team": {"id": "away"}},
                 ],
+            }
+        ],
+    }
+
+
+def _period_status_event(state: str, short_detail: str, completed: bool = False) -> dict[str, Any]:
+    return {
+        "id": "match-period",
+        "date": "2026-06-14T17:00:00Z",
+        "competitions": [
+            {
+                "status": {
+                    "displayClock": short_detail,
+                    "type": {
+                        "state": state,
+                        "completed": completed,
+                        "shortDetail": short_detail,
+                    },
+                },
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "449", "displayName": "Netherlands", "abbreviation": "NED"},
+                        "score": "0",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "627", "displayName": "Japan", "abbreviation": "JPN"},
+                        "score": "0",
+                    },
+                ],
+                "venue": {"fullName": "AT&T Stadium"},
             }
         ],
     }
@@ -331,6 +506,22 @@ def _full_time_event_with_records() -> dict[str, Any]:
         ],
         "scoringPlays": [],
     }
+
+
+def _full_time_event_without_records() -> dict[str, Any]:
+    event = _full_time_event_with_records()
+    for competitor in event["competitions"][0]["competitors"]:
+        competitor.pop("records", None)
+    return event
+
+
+def _in_progress_event_without_records() -> dict[str, Any]:
+    event = _full_time_event_without_records()
+    event["competitions"][0]["status"] = {
+        "displayClock": "58'",
+        "type": {"state": "in", "completed": False, "shortDetail": "Second Half"},
+    }
+    return event
 
 
 def _standings_group(
@@ -399,8 +590,9 @@ class _FakeService:
 
 
 class _FakePreferences:
-    def __init__(self, goal_enabled: dict[int, bool]):
+    def __init__(self, goal_enabled: dict[int, bool], language: str = "en"):
         self.goal_enabled = goal_enabled
+        self.language = language
 
     def enabled_chat_ids(
         self,
@@ -415,7 +607,7 @@ class _FakePreferences:
         return {GOAL_NOTIFICATION: self.goal_enabled[chat_id]}
 
     def get_language(self, _chat_id: int) -> str:
-        return "en"
+        return self.language
 
 
 class _FakeApplication:
