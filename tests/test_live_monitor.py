@@ -365,20 +365,25 @@ def test_status_notifications_use_period_end_format_in_portuguese():
     )
 
 
+def test_halftime_notifications_keep_win_probability_when_odds_exist():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "HT")
+    event["winProbability"] = {"home": 34, "draw": 33, "away": 33}
+
+    asyncio.run(_send_status_notifications(app, [(HALFTIME_NOTIFICATION, event)], preferences, service))
+
+    assert "<b>📊 Probabilidade de vitória</b>" in app.bot.messages[0]["text"]
+    assert "<blockquote>🇳🇱 Países Baixos 34%" in app.bot.messages[0]["text"]
+
+
 def test_kickoff_notifications_use_custom_emoji_and_win_probability_in_portuguese():
     app = _FakeApplication()
     preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
     service = _FakeService()
     event = _period_status_event("in", "1'")
-    event["competitions"][0]["odds"] = [
-        {
-            "moneyline": {
-                "home": {"current": {"odds": "+200"}},
-                "draw": {"current": {"odds": "+200"}},
-                "away": {"current": {"odds": "+200"}},
-            }
-        }
-    ]
+    event["winProbability"] = {"home": 34, "draw": 33, "away": 33}
 
     asyncio.run(_send_status_notifications(app, [(KICKOFF_NOTIFICATION, event)], preferences, service))
 
@@ -399,6 +404,28 @@ def test_full_time_notifications_use_second_half_end_format_in_portuguese():
     preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
     service = _FakeService()
     event = _period_status_event("post", "FT", completed=True)
+    event["competitions"][0]["odds"] = [_even_moneyline_odds()]
+    event["competitions"][0]["details"] = [
+        {
+            "id": "goal-1",
+            "scoringPlay": True,
+            "clock": {"displayValue": "31'"},
+            "athletesInvolved": [{"id": "player-1", "displayName": "Cody Gakpo"}],
+        },
+        {
+            "id": "goal-2",
+            "scoringPlay": True,
+            "clock": {"displayValue": "45'+2'"},
+            "athletesInvolved": [{"id": "player-1", "displayName": "Cody Gakpo"}],
+        },
+        {
+            "id": "goal-3",
+            "scoringPlay": True,
+            "ownGoal": True,
+            "clock": {"displayValue": "60'"},
+            "athletesInvolved": [{"id": "player-2", "displayName": "Ko Itakura"}],
+        },
+    ]
 
     asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
 
@@ -407,6 +434,9 @@ def test_full_time_notifications_use_second_half_end_format_in_portuguese():
     assert "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão" in html
     assert "🕒 14/06 17:00" in html
     assert "🏟 Estádio: AT&amp;T Stadium" in html
+    assert "⚽️ Cody Gakpo 31&#x27;, ⚽️ 45&#x27;+2&#x27;" in html
+    assert "⚽️ Ko Itakura 60&#x27; (GC)" in html
+    assert "Probabilidade de vitória" not in html
 
 
 def test_full_time_summary_sends_before_standings_are_updated():
@@ -584,6 +614,16 @@ def _period_status_event(state: str, short_detail: str, completed: bool = False)
     }
 
 
+def _even_moneyline_odds() -> dict[str, Any]:
+    return {
+        "moneyline": {
+            "home": {"current": {"odds": "+200"}},
+            "draw": {"current": {"odds": "+200"}},
+            "away": {"current": {"odds": "+200"}},
+        }
+    }
+
+
 def _full_time_event_with_records() -> dict[str, Any]:
     return {
         "id": "match-1",
@@ -676,6 +716,9 @@ class _FakeService:
 
     def __init__(self, groups: list[dict[str, Any]] | None = None) -> None:
         self.groups = groups or []
+
+    async def enrich_event_win_probability(self, event: dict[str, Any]) -> dict[str, Any]:
+        return event
 
     async def get_event_summary(self, event_id: str) -> dict[str, Any]:
         return {

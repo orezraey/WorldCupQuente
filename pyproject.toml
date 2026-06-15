@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "curl_cffi>=0.15,<1.0",
     "httpx>=0.27,<1.0",
     "python-dotenv>=1.0,<2.0",
     "python-telegram-bot>=22.8,<23.0",

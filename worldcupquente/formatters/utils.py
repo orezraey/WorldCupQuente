@@ -104,7 +104,7 @@ def format_win_probability(event: dict[str, Any], language: str = "en") -> list[
     if not home or not away:
         return []
 
-    probabilities = _win_probabilities_from_odds(event)
+    probabilities = _win_probabilities_from_event(event)
     if probabilities is None:
         return []
 
@@ -123,91 +123,35 @@ def format_win_probability(event: dict[str, Any], language: str = "en") -> list[
     ]
 
 
-def _win_probabilities_from_odds(event: dict[str, Any]) -> dict[str, int] | None:
-    state = _event_state(event)
-    priority = ("current", "close", "live", "open") if state == "pre" else ("live", "current", "close", "open")
-    for odds in _event_odds(event):
-        probabilities = _moneyline_probabilities(odds, priority)
-        if probabilities is not None:
-            return _normalize_probabilities(probabilities)
-    return None
+def _win_probabilities_from_event(event: dict[str, Any]) -> dict[str, int] | None:
+    source = event.get("winProbability") or {}
+    if not isinstance(source, dict):
+        return None
+
+    probabilities = {
+        "home": _probability_value(source, "home", "homeWin"),
+        "draw": _probability_value(source, "draw"),
+        "away": _probability_value(source, "away", "awayWin"),
+    }
+    if any(value is None for value in probabilities.values()):
+        return None
+
+    values = {side: float(value) for side, value in probabilities.items() if value is not None}
+    if max(values.values()) <= 1:
+        values = {side: value * 100 for side, value in values.items()}
+    return _normalize_probabilities(values)
 
 
-def _event_state(event: dict[str, Any]) -> str:
-    competition = (event.get("competitions") or [{}])[0]
-    status = competition.get("status") or event.get("status") or {}
-    return str((status.get("type") or {}).get("state") or "")
-
-
-def _event_odds(event: dict[str, Any]) -> list[dict[str, Any]]:
-    competition = (event.get("competitions") or [{}])[0]
-    sources = [competition.get("odds"), event.get("odds")]
-    odds: list[dict[str, Any]] = []
-    for source in sources:
-        if isinstance(source, dict):
-            odds.append(source)
+def _probability_value(source: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = source.get(key)
+        if value is None:
             continue
-        if isinstance(source, list):
-            odds.extend(item for item in source if isinstance(item, dict))
-    return odds
-
-
-def _moneyline_probabilities(
-    odds: dict[str, Any],
-    priority: tuple[str, ...],
-) -> dict[str, float] | None:
-    moneyline = odds.get("moneyline") or {}
-    if not isinstance(moneyline, dict):
-        return None
-
-    probabilities: dict[str, float] = {}
-    for side in ("home", "draw", "away"):
-        side_data = moneyline.get(side) or {}
-        if not isinstance(side_data, dict):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
             return None
-        probability = _side_probability(side_data, priority)
-        if probability is None:
-            return None
-        probabilities[side] = probability
-    return probabilities
-
-
-def _side_probability(side_data: dict[str, Any], priority: tuple[str, ...]) -> float | None:
-    for key in priority:
-        market = side_data.get(key) or {}
-        if not isinstance(market, dict):
-            continue
-        probability = _implied_probability(market.get("odds"))
-        if probability is not None:
-            return probability
     return None
-
-
-def _implied_probability(value: Any) -> float | None:
-    odds = _parse_american_odds(value)
-    if odds is None or odds == 0:
-        return None
-    if odds > 0:
-        return 100 / (odds + 100)
-    odds = abs(odds)
-    return odds / (odds + 100)
-
-
-def _parse_american_odds(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    odds_text = str(value).strip().upper()
-    if odds_text in {"EVEN", "EV"}:
-        return 100.0
-    if odds_text.startswith("+"):
-        odds_text = odds_text[1:]
-    try:
-        return float(odds_text)
-    except ValueError:
-        return None
 
 
 def _normalize_probabilities(probabilities: dict[str, float]) -> dict[str, int]:

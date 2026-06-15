@@ -496,6 +496,7 @@ async def _send_pre_game_notifications(
     service: WorldCupService,
 ) -> None:
     for event in pre_game_notifications:
+        event = await service.enrich_event_win_probability(event)
         chat_ids = preferences.enabled_chat_ids(
             PRE_GAME_NOTIFICATION,
             service.settings.live_notification_chat_ids,
@@ -543,7 +544,7 @@ async def _hydrate_notification_event(
     except Exception:
         logger.warning("Failed to hydrate notification event", extra={"event_id": event_id})
         return event
-    return event_from_summary(summary, fallback_event=event)
+    return await service.enrich_event_win_probability(event_from_summary(summary, fallback_event=event))
 
 
 async def _updated_standings_group_for_event(

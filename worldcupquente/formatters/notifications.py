@@ -7,7 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.espn_events import parse_espn_datetime
-from worldcupquente.event_incidents import is_own_goal_play
+from worldcupquente.event_incidents import is_own_goal_play, scoring_plays_from_event
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
     RED_CARD_EMOJI,
@@ -30,7 +30,17 @@ def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo, langua
         if status_type.get("state") == "post" or status_type.get("completed") is True
         else "first_half_end_header"
     )
-    return "\n".join(_format_period_end_lines(event, tz, header_key, language))
+    is_full_time = header_key == "second_half_end_header"
+    return "\n".join(
+        _format_period_end_lines(
+            event,
+            tz,
+            header_key,
+            language,
+            include_win_probability=not is_full_time,
+            include_goal_scorers=is_full_time,
+        )
+    )
 
 
 def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
@@ -89,7 +99,18 @@ def format_full_time_notification_rich(
     group: dict[str, Any] | None,
     language: str = "en",
 ) -> str:
-    blocks = [_rich_paragraph(_format_period_end_lines(event, tz, "second_half_end_header", language))]
+    blocks = [
+        _rich_paragraph(
+            _format_period_end_lines(
+                event,
+                tz,
+                "second_half_end_header",
+                language,
+                include_win_probability=False,
+                include_goal_scorers=True,
+            )
+        )
+    ]
     if group is not None:
         blocks.append(format_standings_group_table(group, language))
     return "".join(blocks)
@@ -100,6 +121,8 @@ def _format_period_end_lines(
     tz: ZoneInfo,
     header_key: str,
     language: str,
+    include_win_probability: bool = True,
+    include_goal_scorers: bool = False,
 ) -> list[str]:
     competition = (event.get("competitions") or [{}])[0]
     competitors = competition.get("competitors", [])
@@ -118,7 +141,11 @@ def _format_period_end_lines(
         lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
     if venue_name:
         lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
-    win_probability_lines = format_win_probability(event, language)
+    goal_lines = _format_goal_scorers(event, language) if include_goal_scorers else []
+    if goal_lines:
+        lines.append("")
+        lines.extend(goal_lines)
+    win_probability_lines = format_win_probability(event, language) if include_win_probability else []
     if win_probability_lines:
         lines.append("")
         lines.extend(win_probability_lines)
@@ -127,6 +154,52 @@ def _format_period_end_lines(
 
 def _rich_paragraph(lines: list[str]) -> str:
     return f"<p>{'<br/>'.join(line for line in lines if line is not None)}</p>"
+
+
+def _format_goal_scorers(event: dict[str, Any], language: str = "en") -> list[str]:
+    goals = scoring_plays_from_event(event)
+    if not goals:
+        return []
+
+    grouped_goals: list[dict[str, Any]] = []
+    grouped_by_scorer: dict[str, dict[str, Any]] = {}
+    for goal in goals:
+        athletes = goal.get("athletesInvolved") or [
+            participant.get("athlete") or {}
+            for participant in goal.get("participants", [])
+            if participant.get("athlete")
+        ]
+        scorer = (athletes or [{}])[0]
+        scorer_name = scorer.get("displayName") or scorer.get("fullName") or text("scorer_unavailable", language)
+        minute = (goal.get("clock") or {}).get("displayValue") or text("minute_unavailable", language)
+        scorer_key = str(scorer.get("id") or scorer_name)
+        if scorer_key not in grouped_by_scorer:
+            grouped_by_scorer[scorer_key] = {
+                "scorer_name": scorer_name,
+                "goals": [],
+            }
+            grouped_goals.append(grouped_by_scorer[scorer_key])
+        grouped_by_scorer[scorer_key]["goals"].append(
+            {
+                "minute": minute,
+                "own_goal": is_own_goal_play(goal),
+            }
+        )
+
+    return [_format_grouped_goal_line(group, language) for group in grouped_goals]
+
+
+def _format_grouped_goal_line(group: dict[str, Any], language: str = "en") -> str:
+    scorer_name = escape(str(group["scorer_name"]))
+    goal_parts = []
+    for index, goal in enumerate(group["goals"]):
+        minute = escape(str(goal["minute"]))
+        own_goal_suffix = f" ({text('own_goal_suffix', language)})" if goal["own_goal"] else ""
+        if index == 0:
+            goal_parts.append(f"⚽️ {scorer_name} {minute}{own_goal_suffix}")
+        else:
+            goal_parts.append(f"⚽️ {minute}{own_goal_suffix}")
+    return ", ".join(goal_parts)
 
 
 def format_goal_notification(

@@ -311,6 +311,7 @@ def test_win_probability_is_omitted_when_odds_are_null():
     from worldcupquente.formatters import format_live_games
 
     event = _win_probability_event()
+    event.pop("winProbability", None)
     event["competitions"][0]["odds"] = [None]
 
     output = format_live_games([event], ZoneInfo("UTC"))
@@ -319,15 +320,7 @@ def test_win_probability_is_omitted_when_odds_are_null():
 
 
 def _win_probability_event(state: str = "in", top_level_odds: bool = False) -> dict[str, object]:
-    odds = [
-        {
-            "moneyline": {
-                "home": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
-                "draw": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
-                "away": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
-            }
-        }
-    ]
+    win_probability = {"home": 34, "draw": 33, "away": 33}
     competition = {
         "status": {
             "type": {"state": state, "shortDetail": "First Half" if state == "in" else "Scheduled"},
@@ -347,13 +340,11 @@ def _win_probability_event(state: str = "in", top_level_odds: bool = False) -> d
         ],
         "venue": {"fullName": "Hard Rock Stadium"},
     }
-    if not top_level_odds:
-        competition["odds"] = odds
     event = {
         "date": "2026-06-14T19:00:00Z",
         "status": competition["status"],
         "competitions": [competition],
+        "winProbability": win_probability,
     }
-    if top_level_odds:
-        event["odds"] = odds
+    return event
     return event
