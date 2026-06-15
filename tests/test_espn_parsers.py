@@ -59,7 +59,8 @@ def test_event_from_summary_merges_data():
         "leaders": [{"team": {}}],
         "commentary": [{"text": "Kick off"}],
         "rosters": [{"team": {}}],
-        "scoringPlays": [{"id": "play1"}]
+        "scoringPlays": [{"id": "play1"}],
+        "odds": [{"details": "Draw +200"}],
     }
 
     fallback = {
@@ -83,12 +84,42 @@ def test_event_from_summary_merges_data():
     assert len(event["commentary"]) == 1
     assert len(event["rosters"]) == 1
     assert len(event["scoringPlays"]) == 1
+    assert event["odds"] == [{"details": "Draw +200"}]
 
     # Check status merging
     status = event["status"]
     assert status["type"]["state"] == "in"
     assert status["type"]["name"] == "STATUS_IN_PROGRESS"
     assert status["type"]["detail"] == "85'"
+
+
+def test_event_from_summary_preserves_fallback_competition_odds():
+    summary = {
+        "header": {
+            "id": "12345",
+            "competitions": [{"date": "2026-06-12T15:30:00Z"}],
+        }
+    }
+    fallback = {
+        "id": "12345",
+        "competitions": [
+            {
+                "odds": [
+                    {
+                        "moneyline": {
+                            "home": {"current": {"odds": "-110"}},
+                            "draw": {"current": {"odds": "+240"}},
+                            "away": {"current": {"odds": "+350"}},
+                        }
+                    }
+                ]
+            }
+        ],
+    }
+
+    event = event_from_summary(summary, fallback_event=fallback)
+
+    assert event["odds"] == fallback["competitions"][0]["odds"]
 
 
 def test_scoring_plays_from_event_details():

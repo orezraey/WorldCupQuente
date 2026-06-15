@@ -103,6 +103,7 @@ def event_from_summary(
             "commentary": summary.get("commentary") or [],
             "rosters": summary.get("rosters") or [],
             "scoringPlays": summary.get("scoringPlays") or [],
+            "odds": summary.get("odds") or fallback_event.get("odds") or fallback_competition.get("odds"),
         }
     )
     return event

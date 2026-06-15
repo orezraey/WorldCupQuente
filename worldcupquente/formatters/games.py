@@ -25,6 +25,7 @@ from worldcupquente.formatters.utils import (
     _find_competitor,
     _format_matchup,
     _translated_status,
+    format_win_probability,
 )
 from worldcupquente.i18n import format_duration, text
 from worldcupquente.team_translations import translated_team_name_html
@@ -196,6 +197,11 @@ def _format_live_event(
     lines.append(f"🕘 {text('live_time', language)}: {escape(str(display_clock or text('unavailable', language)))}")
     lines.append(f"📢 {text('status', language)}: {escape(str(status_text))}")
     lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name or text('unavailable', language)))}")
+
+    win_probability_lines = format_win_probability(event, language)
+    if win_probability_lines:
+        lines.append("")
+        lines.extend(win_probability_lines)
 
     goal_lines = _format_live_goals(event, language)
     if goal_lines:

@@ -275,3 +275,85 @@ def test_live_games_groups_scorer_goals_and_separates_red_cards():
     assert "⚽️ Folarin Balogun 31&#x27;\n⚽️ Folarin Balogun 45&#x27;+5&#x27;" not in output
     assert "⚽️ Folarin Balogun 31&#x27;, ⚽️ 45&#x27;+5&#x27;\n\n" in output
     assert "Tim Ream 52&#x27;" in output
+
+
+def test_win_probability_is_included_in_live_games_from_top_level_odds():
+    from worldcupquente.formatters import format_live_games
+
+    output = format_live_games([_win_probability_event(top_level_odds=True)], ZoneInfo("UTC"))
+
+    assert "📊 Win Probability" in output
+    assert "<b>📊 Win Probability</b>\n<blockquote>🇩🇪 Germany 34%" in output
+    assert "🤝 Draw 33%" in output
+    assert "🇨🇼 Curacao 33%</blockquote>" in output
+
+
+def test_win_probability_is_localized_in_notifications():
+    from worldcupquente.formatters import format_goal_notification, format_pre_game_notification
+
+    event = _win_probability_event(state="pre")
+    goal = {
+        "clock": {"displayValue": "12'"},
+        "athletesInvolved": [{"displayName": "Player One"}],
+    }
+
+    pre_game_output = format_pre_game_notification(event, ZoneInfo("UTC"), language="pt")
+    goal_output = format_goal_notification(event, goal, language="pt")
+
+    for output in (pre_game_output, goal_output):
+        assert "📊 Probabilidade de vitória" in output
+        assert "<b>📊 Probabilidade de vitória</b>\n<blockquote>🇩🇪 Alemanha 34%" in output
+        assert "🤝 Empate 33%" in output
+        assert "🇨🇼 Curaçao 33%</blockquote>" in output
+
+
+def test_win_probability_is_omitted_when_odds_are_null():
+    from worldcupquente.formatters import format_live_games
+
+    event = _win_probability_event()
+    event["competitions"][0]["odds"] = [None]
+
+    output = format_live_games([event], ZoneInfo("UTC"))
+
+    assert "Win Probability" not in output
+
+
+def _win_probability_event(state: str = "in", top_level_odds: bool = False) -> dict[str, object]:
+    odds = [
+        {
+            "moneyline": {
+                "home": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
+                "draw": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
+                "away": {"current": {"odds": "+200"}, "close": {"odds": "+250"}},
+            }
+        }
+    ]
+    competition = {
+        "status": {
+            "type": {"state": state, "shortDetail": "First Half" if state == "in" else "Scheduled"},
+            "displayClock": "12'" if state == "in" else None,
+        },
+        "competitors": [
+            {
+                "homeAway": "home",
+                "team": {"id": "481", "displayName": "Germany", "abbreviation": "GER"},
+                "score": "0",
+            },
+            {
+                "homeAway": "away",
+                "team": {"id": "11678", "displayName": "Curacao", "abbreviation": "CUW"},
+                "score": "0",
+            },
+        ],
+        "venue": {"fullName": "Hard Rock Stadium"},
+    }
+    if not top_level_odds:
+        competition["odds"] = odds
+    event = {
+        "date": "2026-06-14T19:00:00Z",
+        "status": competition["status"],
+        "competitions": [competition],
+    }
+    if top_level_odds:
+        event["odds"] = odds
+    return event

@@ -14,9 +14,12 @@ from worldcupquente.formatters.utils import (
     _find_competitor,
     _find_team_by_id,
     _format_matchup,
+    format_win_probability,
 )
 from worldcupquente.i18n import text
 from worldcupquente.team_translations import translated_team_name_html
+
+KICKOFF_EMOJI = '<tg-emoji emoji-id="5264919878082509254">⚽️</tg-emoji>'
 
 
 def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
@@ -48,6 +51,35 @@ def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: 
         lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
     if venue_name:
         lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+    win_probability_lines = format_win_probability(event, language)
+    if win_probability_lines:
+        lines.append("")
+        lines.extend(win_probability_lines)
+    return "\n".join(lines)
+
+
+def format_kickoff_notification(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    venue = competition.get("venue", {}) or event.get("venue", {})
+    venue_name = venue.get("fullName") or venue.get("displayName")
+
+    lines = [
+        f"{KICKOFF_EMOJI} <b>{text('kickoff_header', language)}</b>",
+        "",
+        f"⚽️ {_format_matchup(home, away, 'pre', language)}",
+    ]
+    if event_time:
+        lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
+    if venue_name:
+        lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+    win_probability_lines = format_win_probability(event, language)
+    if win_probability_lines:
+        lines.append("")
+        lines.extend(win_probability_lines)
     return "\n".join(lines)
 
 
@@ -86,6 +118,10 @@ def _format_period_end_lines(
         lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
     if venue_name:
         lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+    win_probability_lines = format_win_probability(event, language)
+    if win_probability_lines:
+        lines.append("")
+        lines.extend(win_probability_lines)
     return lines
 
 
@@ -123,6 +159,10 @@ def format_goal_notification(
         "",
         _format_matchup(home, away, str(state), language),
     ]
+    win_probability_lines = format_win_probability(event, language)
+    if win_probability_lines:
+        lines.append("")
+        lines.extend(win_probability_lines)
     return "\n".join(lines)
 
 

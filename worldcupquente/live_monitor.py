@@ -21,6 +21,7 @@ from worldcupquente.event_incidents import (
 from worldcupquente.formatters import (
     format_full_time_notification_rich,
     format_goal_notification,
+    format_kickoff_notification,
     format_match_status_notification,
     format_penalty_notification,
     format_pre_game_notification,
@@ -45,6 +46,7 @@ SEEN_GOAL_IDS_KEY = "live_seen_goal_ids"
 SEEN_PENALTY_IDS_KEY = "live_seen_penalty_ids"
 SEEN_RED_CARD_IDS_KEY = "live_seen_red_card_ids"
 SEEN_PRE_GAME_IDS_KEY = "live_seen_pre_game_ids"
+SEEN_KICKOFF_IDS_KEY = "live_seen_kickoff_ids"
 SEEN_HALFTIME_IDS_KEY = "live_seen_halftime_ids"
 SEEN_FULL_TIME_IDS_KEY = "live_seen_full_time_ids"
 LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
@@ -53,6 +55,7 @@ NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
 PENDING_FULL_TIME_STANDINGS_KEY = "live_pending_full_time_standings"
 STANDINGS_SNAPSHOTS_KEY = "live_standings_snapshots"
 PRE_GAME_NOTIFICATION_WINDOW = timedelta(minutes=5)
+KICKOFF_NOTIFICATION = "kickoff"
 
 
 async def start_live_monitor(application: Application) -> None:
@@ -142,6 +145,7 @@ class LiveMonitorState:
     seen_penalty_ids: set[str]
     seen_red_card_ids: set[str]
     seen_pre_game_ids: set[str]
+    seen_kickoff_ids: set[str]
     seen_halftime_ids: set[str]
     seen_full_time_ids: set[str]
     score_snapshots: dict[str, tuple[int, ...]]
@@ -154,6 +158,7 @@ def _live_monitor_state(application: Application) -> LiveMonitorState:
         seen_penalty_ids=application.bot_data.setdefault(SEEN_PENALTY_IDS_KEY, set()),
         seen_red_card_ids=application.bot_data.setdefault(SEEN_RED_CARD_IDS_KEY, set()),
         seen_pre_game_ids=application.bot_data.setdefault(SEEN_PRE_GAME_IDS_KEY, set()),
+        seen_kickoff_ids=application.bot_data.setdefault(SEEN_KICKOFF_IDS_KEY, set()),
         seen_halftime_ids=application.bot_data.setdefault(SEEN_HALFTIME_IDS_KEY, set()),
         seen_full_time_ids=application.bot_data.setdefault(SEEN_FULL_TIME_IDS_KEY, set()),
         score_snapshots=application.bot_data.setdefault(LIVE_SCORE_SNAPSHOTS_KEY, {}),
@@ -251,11 +256,18 @@ async def _collect_status_notifications(
     is_bootstrapped = state.is_bootstrapped
     seen_halftime_ids = state.seen_halftime_ids
     seen_full_time_ids = state.seen_full_time_ids
+    seen_kickoff_ids = state.seen_kickoff_ids
 
     for event in status_events:
         event_id = str(event.get("id", ""))
         if not event_id:
             continue
+        if _is_in_progress_event(event) and event_id not in seen_kickoff_ids:
+            seen_kickoff_ids.add(event_id)
+            if is_bootstrapped and _is_kickoff_event(event):
+                status_notifications.append(
+                    (KICKOFF_NOTIFICATION, await _hydrate_notification_event(service, event))
+                )
         if _is_halftime_event(event) and event_id not in seen_halftime_ids:
             seen_halftime_ids.add(event_id)
             if is_bootstrapped:
@@ -323,8 +335,9 @@ async def _send_status_notifications(
     service: WorldCupService,
 ) -> None:
     for notification_type, event in status_notifications:
+        preference_type = PRE_GAME_NOTIFICATION if notification_type == KICKOFF_NOTIFICATION else notification_type
         chat_ids = preferences.enabled_chat_ids(
-            notification_type,
+            preference_type,
             service.settings.live_notification_chat_ids,
             _event_team_ids(event),
         )
@@ -350,6 +363,8 @@ async def _send_status_notifications(
                     None,
                     language,
                 )
+            elif notification_type == KICKOFF_NOTIFICATION:
+                halftime_text = format_kickoff_notification(event, service.bot_timezone, language)
             else:
                 halftime_text = format_match_status_notification(event, service.bot_timezone, language)
             try:
@@ -727,6 +742,14 @@ def _is_halftime_event(event: dict[str, Any]) -> bool:
     if status_type.get("state") != "in":
         return False
     return any(part == "HT" or "HALFTIME" in part.upper() for part in _status_text_parts(status))
+
+
+def _is_kickoff_event(event: dict[str, Any]) -> bool:
+    status = _event_status(event)
+    status_type = status.get("type") or {}
+    if status_type.get("state") != "in":
+        return False
+    return not _is_halftime_event(event)
 
 
 def _is_full_time_event(event: dict[str, Any]) -> bool:

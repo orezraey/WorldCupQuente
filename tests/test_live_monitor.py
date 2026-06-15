@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.live_monitor import (
+    KICKOFF_NOTIFICATION,
     PENDING_FULL_TIME_STANDINGS_KEY,
     STANDINGS_SNAPSHOTS_KEY,
     LiveMonitorState,
@@ -36,6 +37,7 @@ def test_collect_live_notifications_bootstrap_records_without_sending():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -57,6 +59,7 @@ def test_collect_live_notifications_deduplicates_seen_score_change():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -77,6 +80,7 @@ def test_collect_live_notifications_sends_only_goal_for_converted_penalty():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -97,6 +101,7 @@ def test_collect_live_notifications_deduplicates_penalty_text_updates():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={"match-1": (0, 0)},
@@ -135,6 +140,7 @@ def test_collect_status_notifications_bootstrap_records_without_sending():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -154,6 +160,7 @@ def test_collect_status_notifications_hydrates_full_time_event():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -170,6 +177,74 @@ def test_collect_status_notifications_hydrates_full_time_event():
     assert state.seen_full_time_ids == {"match-1"}
 
 
+def test_collect_status_notifications_sends_kickoff_once_after_bootstrap():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={},
+        is_bootstrapped=True,
+    )
+    event = _status_event("in", short_detail="1'")
+
+    first_notifications = asyncio.run(_collect_status_notifications([event], state, _FakeService()))
+    second_notifications = asyncio.run(_collect_status_notifications([event], state, _FakeService()))
+
+    assert [notification[0] for notification in first_notifications] == [KICKOFF_NOTIFICATION]
+    assert second_notifications == []
+    assert state.seen_kickoff_ids == {"match-1"}
+
+
+def test_collect_status_notifications_bootstrap_records_kickoff_without_sending():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={},
+        is_bootstrapped=False,
+    )
+    event = _status_event("in", short_detail="1'")
+
+    notifications = asyncio.run(_collect_status_notifications([event], state, _FakeService()))
+
+    assert notifications == []
+    assert state.seen_kickoff_ids == {"match-1"}
+
+
+def test_collect_status_notifications_does_not_send_kickoff_after_halftime_seen_first():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={},
+        is_bootstrapped=False,
+    )
+
+    halftime_notifications = asyncio.run(
+        _collect_status_notifications([_status_event("in", short_detail="HT")], state, _FakeService())
+    )
+    state.is_bootstrapped = True
+    second_half_notifications = asyncio.run(
+        _collect_status_notifications([_status_event("in", short_detail="46'")], state, _FakeService())
+    )
+
+    assert halftime_notifications == []
+    assert second_half_notifications == []
+    assert state.seen_kickoff_ids == {"match-1"}
+
+
 def test_collect_status_notifications_ignores_extra_time_or_penalties():
     for short_detail in ("Extra Time", "Penalties"):
         state = LiveMonitorState(
@@ -177,6 +252,7 @@ def test_collect_status_notifications_ignores_extra_time_or_penalties():
             seen_penalty_ids=set(),
             seen_red_card_ids=set(),
             seen_pre_game_ids=set(),
+            seen_kickoff_ids=set(),
             seen_halftime_ids=set(),
             seen_full_time_ids=set(),
             score_snapshots={},
@@ -196,6 +272,7 @@ def test_collect_pre_game_notifications_within_five_minutes_once():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -218,6 +295,7 @@ def test_collect_pre_game_notifications_ignores_later_games():
         seen_penalty_ids=set(),
         seen_red_card_ids=set(),
         seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
         seen_halftime_ids=set(),
         seen_full_time_ids=set(),
         score_snapshots={},
@@ -284,6 +362,35 @@ def test_status_notifications_use_period_end_format_in_portuguese():
         "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão\n"
         "🕒 14/06 17:00\n"
         "🏟 Estádio: AT&amp;T Stadium"
+    )
+
+
+def test_kickoff_notifications_use_custom_emoji_and_win_probability_in_portuguese():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "1'")
+    event["competitions"][0]["odds"] = [
+        {
+            "moneyline": {
+                "home": {"current": {"odds": "+200"}},
+                "draw": {"current": {"odds": "+200"}},
+                "away": {"current": {"odds": "+200"}},
+            }
+        }
+    ]
+
+    asyncio.run(_send_status_notifications(app, [(KICKOFF_NOTIFICATION, event)], preferences, service))
+
+    assert app.bot.messages[0]["text"] == (
+        '<tg-emoji emoji-id="5264919878082509254">⚽️</tg-emoji> <b>Início de jogo!</b>\n\n'
+        "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão\n"
+        "🕒 14/06 17:00\n"
+        "🏟 Estádio: AT&amp;T Stadium\n\n"
+        "<b>📊 Probabilidade de vitória</b>\n"
+        "<blockquote>🇳🇱 Países Baixos 34%\n"
+        "🤝 Empate 33%\n"
+        "🇯🇵 Japão 33%</blockquote>"
     )
 
 
