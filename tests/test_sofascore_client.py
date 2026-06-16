@@ -59,6 +59,38 @@ def test_get_win_probability_falls_back_to_sofascore_odds():
     assert client.paths == ["/event/1/win-probability", "/event/1/odds/1/all"]
 
 
+def test_get_match_incidents_returns_incidents_list():
+    client = _FakeSofaScoreClient(
+        {
+            "/event/1/incidents": {"incidents": [{"id": 10, "type": "goal"}]},
+        }
+    )
+
+    assert asyncio.run(client.get_match_incidents(1)) == [{"id": 10, "type": "goal"}]
+    assert client.paths == ["/event/1/incidents"]
+
+
+def test_get_match_incidents_returns_empty_list_on_failure():
+    client = _FakeSofaScoreClient({"/event/1/incidents": RuntimeError("404")})
+
+    assert asyncio.run(client.get_match_incidents(1)) == []
+    assert client.paths == ["/event/1/incidents"]
+
+
+def test_get_match_lineups_returns_payload():
+    client = _FakeSofaScoreClient({"/event/1/lineups": {"home": {"players": []}}})
+
+    assert asyncio.run(client.get_match_lineups(1)) == {"home": {"players": []}}
+    assert client.paths == ["/event/1/lineups"]
+
+
+def test_get_match_statistics_returns_statistics_list():
+    client = _FakeSofaScoreClient({"/event/1/statistics": {"statistics": [{"period": "ALL"}]}})
+
+    assert asyncio.run(client.get_match_statistics(1)) == [{"period": "ALL"}]
+    assert client.paths == ["/event/1/statistics"]
+
+
 class _FakeSofaScoreClient(SofaScoreClient):
     def __init__(self, responses: dict[str, dict[str, Any] | Exception]) -> None:
         super().__init__(timeout=1, user_agent="test")

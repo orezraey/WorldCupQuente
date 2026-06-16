@@ -17,6 +17,7 @@ from worldcupquente.espn_events import (
     _event_has_team,
     _event_local_date_param,
     event_from_summary,
+    event_state,
     live_events_from_scoreboard,
     parse_espn_datetime,
 )
@@ -35,6 +36,9 @@ TEAMS_CACHE_SECONDS = 60 * 60 * 24
 ROSTER_CACHE_SECONDS = 60 * 60 * 12
 SOFASCORE_EVENTS_CACHE_SECONDS = 60 * 5
 SOFASCORE_EVENT_MAPPING_CACHE_SECONDS = 60 * 60 * 12
+SOFASCORE_INCIDENTS_CACHE_SECONDS = 15
+SOFASCORE_LINEUPS_CACHE_SECONDS = 60 * 5
+SOFASCORE_STATISTICS_CACHE_SECONDS = 60 * 5
 SOFASCORE_WIN_PROBABILITY_CACHE_SECONDS = 30
 SOFASCORE_EVENT_TIME_TOLERANCE_SECONDS = 60 * 60 * 6
 
@@ -107,7 +111,97 @@ class WorldCupService:
                 hydrated.append(event)
                 continue
             hydrated.append(event_from_summary(summary, fallback_event=event))
+        hydrated = await self.enrich_events_sofascore_incidents(hydrated)
         return await self.enrich_events_win_probability(hydrated)
+
+    async def enrich_events_sofascore_incidents(
+        self,
+        events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return list(
+            await asyncio.gather(
+                *(self.enrich_event_sofascore_incidents(event) for event in events),
+            )
+        )
+
+    async def enrich_event_sofascore_incidents(self, event: dict[str, Any]) -> dict[str, Any]:
+        if event.get("sofascoreIncidents"):
+            return event
+
+        try:
+            mapping = await self._sofascore_event_mapping(event)
+            if mapping is None:
+                return event
+
+            incidents = await self._sofascore_match_incidents(mapping["event_id"])
+            normalized = _normalize_sofascore_incidents(
+                event,
+                incidents,
+                reversed_match=bool(mapping.get("reversed")),
+            )
+            if normalized["goals"] or normalized["redCards"]:
+                event["sofascoreIncidents"] = normalized
+        except Exception as e:
+            logger.warning(f"Failed to enrich event with SofaScore incidents: {e}")
+        return event
+
+    async def enrich_event_sofascore_post_match(self, event: dict[str, Any]) -> dict[str, Any]:
+        if event.get("sofascorePlayerRatings") and event.get("sofascoreStatistics"):
+            return event
+
+        try:
+            mapping = await self._sofascore_event_mapping(event)
+            if mapping is None:
+                return event
+
+            lineups, statistics = await asyncio.gather(
+                self._sofascore_match_lineups(mapping["event_id"]),
+                self._sofascore_match_statistics(mapping["event_id"]),
+            )
+            reversed_match = bool(mapping.get("reversed"))
+            ratings = _normalize_sofascore_player_ratings(lineups, reversed_match=reversed_match)
+            if ratings["home"] or ratings["away"]:
+                event["sofascorePlayerRatings"] = ratings
+
+            normalized_statistics = _normalize_sofascore_match_statistics(
+                statistics,
+                reversed_match=reversed_match,
+            )
+            if normalized_statistics:
+                event["sofascoreStatistics"] = normalized_statistics
+        except Exception as e:
+            logger.warning(f"Failed to enrich event with SofaScore post-match data: {e}")
+        return event
+
+    async def enrich_events_sofascore_player_ratings(
+        self,
+        events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return list(
+            await asyncio.gather(
+                *(self.enrich_event_sofascore_player_ratings(event) for event in events),
+            )
+        )
+
+    async def enrich_event_sofascore_player_ratings(self, event: dict[str, Any]) -> dict[str, Any]:
+        if event.get("sofascorePlayerRatings"):
+            return event
+
+        try:
+            mapping = await self._sofascore_event_mapping(event)
+            if mapping is None:
+                return event
+
+            lineups = await self._sofascore_match_lineups(mapping["event_id"])
+            ratings = _normalize_sofascore_player_ratings(
+                lineups,
+                reversed_match=bool(mapping.get("reversed")),
+            )
+            if ratings["home"] or ratings["away"]:
+                event["sofascorePlayerRatings"] = ratings
+        except Exception as e:
+            logger.warning(f"Failed to enrich event with SofaScore player ratings: {e}")
+        return event
 
     async def enrich_events_win_probability(
         self,
@@ -181,6 +275,36 @@ class WorldCupService:
             self.cache.set(cache_key, probability, SOFASCORE_WIN_PROBABILITY_CACHE_SECONDS)
         return probability
 
+    async def _sofascore_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
+        cache_key = f"sofascore:incidents:{event_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        incidents = await self.sofascore_client.get_match_incidents(event_id)
+        self.cache.set(cache_key, incidents, SOFASCORE_INCIDENTS_CACHE_SECONDS)
+        return incidents
+
+    async def _sofascore_match_lineups(self, event_id: int | str) -> dict[str, Any]:
+        cache_key = f"sofascore:lineups:{event_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        lineups = await self.sofascore_client.get_match_lineups(event_id)
+        self.cache.set(cache_key, lineups, SOFASCORE_LINEUPS_CACHE_SECONDS)
+        return lineups
+
+    async def _sofascore_match_statistics(self, event_id: int | str) -> list[dict[str, Any]]:
+        cache_key = f"sofascore:statistics:{event_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        statistics = await self.sofascore_client.get_match_statistics(event_id)
+        self.cache.set(cache_key, statistics, SOFASCORE_STATISTICS_CACHE_SECONDS)
+        return statistics
+
     async def get_schedule(self) -> dict[str, Any]:
         date_range = f"{WORLD_CUP_START_DATE}-{WORLD_CUP_END_DATE}"
         cache_key = f"scoreboard:{date_range}"
@@ -200,6 +324,31 @@ class WorldCupService:
     async def get_schedule_events(self) -> list[dict[str, Any]]:
         schedule = await self.get_schedule()
         return schedule.get("events", [])
+
+    async def get_finished_events(self) -> list[dict[str, Any]]:
+        events = await self.get_schedule_events()
+        return sorted(
+            (event for event in events if _is_finished_event(event)),
+            key=lambda event: _event_date_value(event),
+            reverse=True,
+        )
+
+    async def get_finished_event_details(self, event_id: str) -> dict[str, Any] | None:
+        fallback = next(
+            (event for event in await self.get_schedule_events() if str(event.get("id", "")) == str(event_id)),
+            None,
+        )
+        try:
+            summary = await self.get_event_summary(event_id)
+        except Exception:
+            if fallback is None:
+                return None
+            event = fallback
+        else:
+            event = event_from_summary(summary, fallback_event=fallback)
+        event = await self.enrich_event_sofascore_incidents(event)
+        event = await self.enrich_event_sofascore_post_match(event)
+        return event
 
     async def get_schedule_events_by_date(self, date_param: str) -> list[dict[str, Any]]:
         events = await self.get_schedule_events()
@@ -272,6 +421,13 @@ def _sofascore_candidate_dates(event: dict[str, Any], tz: ZoneInfo) -> list[str]
 def _event_date_value(event: dict[str, Any]) -> str:
     competition = (event.get("competitions") or [{}])[0]
     return str(event.get("date") or competition.get("date") or "")
+
+
+def _is_finished_event(event: dict[str, Any]) -> bool:
+    competition = (event.get("competitions") or [{}])[0]
+    status = competition.get("status") or event.get("status") or {}
+    status_type = status.get("type") or {}
+    return event_state(event) == "post" or status_type.get("completed") is True
 
 
 def _match_sofascore_event(
@@ -362,3 +518,321 @@ def _normalize_team_name(value: Any) -> str:
 
 def _contains_team_name(left: str, right: str) -> bool:
     return len(left) > 3 and len(right) > 3 and (left in right or right in left)
+
+
+def _normalize_sofascore_incidents(
+    event: dict[str, Any],
+    incidents: list[dict[str, Any]],
+    *,
+    reversed_match: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    goals: list[dict[str, Any]] = []
+    red_cards: list[dict[str, Any]] = []
+    for incident in incidents:
+        incident_type = str(_incident_value(incident, "type", "incidentType", "incident_type") or "")
+        if incident_type == "goal":
+            goals.append(_normalize_sofascore_goal(event, incident, reversed_match))
+        elif incident_type == "card" and _is_sofascore_red_card(incident):
+            red_cards.append(_normalize_sofascore_red_card(event, incident, reversed_match))
+
+    return {
+        "goals": sorted(goals, key=_goal_clock_sort_key),
+        "redCards": sorted(red_cards, key=_goal_clock_sort_key),
+    }
+
+
+def _normalize_sofascore_goal(
+    event: dict[str, Any],
+    incident: dict[str, Any],
+    reversed_match: bool,
+) -> dict[str, Any]:
+    detail = _sofascore_incident_detail(incident)
+    is_penalty = "penalty" in detail
+    is_own_goal = "own" in detail
+    text = "Penalty Kick" if is_penalty else "Own Goal" if is_own_goal else "Goal"
+    player = _sofascore_player(incident)
+    return {
+        "id": _sofascore_incident_id(incident, "goal"),
+        "source": "sofascore",
+        "scoringPlay": True,
+        "shootout": False,
+        "team": _sofascore_incident_team(event, incident, reversed_match),
+        "clock": _sofascore_incident_clock(incident),
+        "type": {"id": detail or "goal", "type": "goal", "text": text},
+        "scoreValue": 1,
+        "scoreAfter": _sofascore_score_after(incident, reversed_match),
+        "athletesInvolved": [player] if player else [],
+        "text": text,
+        "ownGoal": is_own_goal,
+    }
+
+
+def _normalize_sofascore_red_card(
+    event: dict[str, Any],
+    incident: dict[str, Any],
+    reversed_match: bool,
+) -> dict[str, Any]:
+    detail = _sofascore_incident_detail(incident)
+    text = "Second Yellow" if "yellow" in detail else "Red Card"
+    return {
+        "id": _sofascore_incident_id(incident, "card"),
+        "source": "sofascore",
+        "redCard": True,
+        "athlete": _sofascore_player(incident),
+        "clock": _sofascore_incident_clock(incident),
+        "team": _sofascore_incident_team(event, incident, reversed_match),
+        "type": {"id": detail or "red", "type": "card", "text": text},
+        "text": text,
+    }
+
+
+def _is_sofascore_red_card(incident: dict[str, Any]) -> bool:
+    detail = _sofascore_incident_detail(incident)
+    return detail in {"red", "redcard", "yellowred", "secondyellow", "secondyellowcard"}
+
+
+def _sofascore_incident_detail(incident: dict[str, Any]) -> str:
+    raw_detail = _incident_value(incident, "incidentClass", "incident_class", "details", "detail")
+    return re.sub(r"[^a-z]", "", str(raw_detail or "").lower())
+
+
+def _sofascore_incident_id(incident: dict[str, Any], prefix: str) -> str:
+    incident_id = _incident_value(incident, "id")
+    if incident_id is not None:
+        return f"sofascore:{incident_id}"
+    player = _sofascore_player(incident) or {}
+    clock = _sofascore_incident_clock(incident)
+    return ":".join(
+        [
+            "sofascore",
+            prefix,
+            str(clock.get("displayValue", "")),
+            str(player.get("id") or player.get("displayName") or ""),
+        ]
+    )
+
+
+def _sofascore_incident_clock(incident: dict[str, Any]) -> dict[str, Any]:
+    seconds = _incident_int_value(incident, "timeInSeconds", "time_in_seconds", "timeSeconds")
+    minute = _incident_int_value(incident, "time", "minute")
+    added_time = _incident_int_value(incident, "addedTime", "added_time")
+    return {
+        "value": minute,
+        "seconds": seconds,
+        "displayValue": _sofascore_display_minute(minute, added_time),
+    }
+
+
+def _sofascore_display_minute(minute: int | None, added_time: int | None) -> str:
+    if minute is None:
+        return ""
+    if added_time and added_time > 0:
+        return f"{minute}'+{added_time}'"
+    return f"{minute}'"
+
+
+def _sofascore_score_after(incident: dict[str, Any], reversed_match: bool) -> str:
+    home_score = _incident_value(incident, "homeScore", "home_score")
+    away_score = _incident_value(incident, "awayScore", "away_score")
+    if home_score is None or away_score is None:
+        return ""
+    if reversed_match:
+        home_score, away_score = away_score, home_score
+    return f"{home_score}:{away_score}"
+
+
+def _sofascore_player(incident: dict[str, Any]) -> dict[str, Any]:
+    player = _incident_value(incident, "player")
+    if not isinstance(player, dict):
+        player = {}
+    player_name = (
+        player.get("name")
+        or player.get("shortName")
+        or player.get("slug")
+        or _incident_value(incident, "playerName", "player_name")
+    )
+    if not player and not player_name:
+        return {}
+    return {
+        "id": str(player.get("id") or ""),
+        "displayName": str(player_name or ""),
+        "fullName": str(player.get("name") or player_name or ""),
+    }
+
+
+def _sofascore_incident_team(
+    event: dict[str, Any],
+    incident: dict[str, Any],
+    reversed_match: bool,
+) -> dict[str, Any]:
+    is_home = _incident_bool_value(incident, "isHome", "is_home")
+    if is_home is None:
+        return {}
+    side = "home" if is_home else "away"
+    if reversed_match:
+        side = "away" if side == "home" else "home"
+    return _espn_team_by_side(event, side) or {}
+
+
+def _espn_team_by_side(event: dict[str, Any], side: str) -> dict[str, Any] | None:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    for competitor in competitors:
+        if competitor.get("homeAway") == side:
+            return competitor.get("team") or {}
+    index = 0 if side == "home" else 1
+    if index < len(competitors):
+        return competitors[index].get("team") or {}
+    return None
+
+
+def _goal_clock_sort_key(detail: dict[str, Any]) -> float:
+    clock = detail.get("clock") or {}
+    try:
+        return float(clock.get("seconds") or clock.get("value") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _incident_value(incident: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in incident:
+            return incident[key]
+    return None
+
+
+def _incident_int_value(incident: dict[str, Any], *keys: str) -> int | None:
+    value = _incident_value(incident, *keys)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _incident_bool_value(incident: dict[str, Any], *keys: str) -> bool | None:
+    value = _incident_value(incident, *keys)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return None
+
+
+def _normalize_sofascore_player_ratings(
+    lineups: dict[str, Any],
+    *,
+    reversed_match: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    ratings = {"home": [], "away": []}
+    if not isinstance(lineups, dict):
+        return ratings
+
+    for sofa_side in ("home", "away"):
+        side = _mapped_side(sofa_side, reversed_match)
+        team_lineup = lineups.get(sofa_side) or {}
+        players = team_lineup.get("players") or []
+        if not isinstance(players, list):
+            continue
+        for item in players:
+            rating = _player_rating_value(item)
+            if rating is None:
+                continue
+            player = item.get("player") or {}
+            player_name = player.get("name") or player.get("shortName") or item.get("playerName")
+            if not player_name:
+                continue
+            ratings[side].append(
+                {
+                    "id": str(player.get("id") or ""),
+                    "name": str(player_name),
+                    "shirtNumber": item.get("shirtNumber") or item.get("jerseyNumber"),
+                    "position": item.get("position") or player.get("position"),
+                    "substitute": item.get("substitute") is True,
+                    "rating": rating,
+                }
+            )
+
+    for side in ratings:
+        ratings[side].sort(key=lambda player: float(player["rating"]), reverse=True)
+    return ratings
+
+
+def _player_rating_value(item: dict[str, Any]) -> float | None:
+    statistics = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
+    value = statistics.get("rating") or item.get("rating")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_sofascore_match_statistics(
+    statistics: list[dict[str, Any]],
+    *,
+    reversed_match: bool = False,
+) -> list[dict[str, str]]:
+    period = next(
+        (item for item in statistics if str(item.get("period") or "").upper() == "ALL"),
+        statistics[0] if statistics else {},
+    )
+    groups = period.get("groups") or []
+    if not isinstance(groups, list):
+        return []
+
+    rows_by_key: dict[str, dict[str, str]] = {}
+    wanted_keys = {
+        "ballPossession",
+        "expectedGoals",
+        "bigChanceCreated",
+        "totalShotsOnGoal",
+        "shotsOnGoal",
+        "goalkeeperSaves",
+        "cornerKicks",
+        "fouls",
+        "yellowCards",
+        "redCards",
+    }
+    for group in groups:
+        items = group.get("statisticsItems") or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            key = str(item.get("key") or "")
+            if key not in wanted_keys or key in rows_by_key:
+                continue
+            home = item.get("home")
+            away = item.get("away")
+            if home is None and away is None:
+                continue
+            if reversed_match:
+                home, away = away, home
+            rows_by_key[key] = {
+                "key": key,
+                "name": str(item.get("name") or key),
+                "home": str(home) if home is not None else "-",
+                "away": str(away) if away is not None else "-",
+            }
+
+    order = [
+        "ballPossession",
+        "expectedGoals",
+        "bigChanceCreated",
+        "totalShotsOnGoal",
+        "shotsOnGoal",
+        "goalkeeperSaves",
+        "cornerKicks",
+        "fouls",
+        "yellowCards",
+        "redCards",
+    ]
+    return [rows_by_key[key] for key in order if key in rows_by_key]
+
+
+def _mapped_side(side: str, reversed_match: bool) -> str:
+    if not reversed_match:
+        return side
+    return "away" if side == "home" else "home"

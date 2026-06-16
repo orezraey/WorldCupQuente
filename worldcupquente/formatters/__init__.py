@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from worldcupquente.formatters.games import (
     format_games,
+    format_history_game_details,
+    format_history_games,
+    format_history_player_ratings,
+    format_history_statistics,
     format_live_games,
     format_live_games_rich,
+    format_player_ratings_table,
     format_today_games,
 )
 from worldcupquente.formatters.notifications import (
@@ -26,6 +31,11 @@ __all__ = [
     "format_today_games",
     "format_live_games",
     "format_live_games_rich",
+    "format_history_games",
+    "format_history_game_details",
+    "format_history_statistics",
+    "format_history_player_ratings",
+    "format_player_ratings_table",
     "format_games",
     "format_standings_group_table",
     "format_team_roster",

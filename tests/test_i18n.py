@@ -82,6 +82,7 @@ def test_bot_commands_are_localized():
         "today",
         "live",
         "calendar",
+        "history",
         "standings",
         "teams",
         "config",
@@ -91,6 +92,7 @@ def test_bot_commands_are_localized():
         "hoje",
         "aovivo",
         "calendario",
+        "historico",
         "tabela",
         "selecoes",
         "config",
@@ -211,8 +213,22 @@ def test_live_games_formatting_includes_blank_line_before_goals():
     assert "🏟 Estádio: BMO Field\n\n⚽️ Jovo Lukic 21&#x27;" in plain_output
 
     # Verify rich HTML output (format_live_games_rich)
-    rich_output = format_live_games_rich([event], ZoneInfo("UTC"), language="pt")
+    rich_output = format_live_games_rich([event], ZoneInfo("UTC"), language="pt", show_ratings=True)
     assert "🏟 Estádio: BMO Field<br/><br/>⚽️ Jovo Lukic 21&#x27;" in rich_output
+
+
+def test_live_games_rich_includes_sofascore_rating_table_with_emojis():
+    from worldcupquente.formatters import format_live_games_rich
+
+    event = _live_event_with_ratings()
+
+    rich_output = format_live_games_rich([event], ZoneInfo("UTC"), language="pt", show_ratings=True)
+
+    assert '<tg-emoji emoji-id="5431497092281421497">⭐</tg-emoji> Notas SofaScore' in rich_output
+    assert '<tg-emoji emoji-id="5283257193708147680">⭐</tg-emoji> #8 Home Player' in rich_output
+    assert '<tg-emoji emoji-id="5280826091894755088">⭐</tg-emoji> #10 Away Player' in rich_output
+    assert "#8 Home Player" in rich_output
+    assert "#10 Away Player (res)" in rich_output
 
 
 def test_live_games_groups_scorer_goals_and_separates_red_cards():
@@ -307,6 +323,24 @@ def test_win_probability_is_localized_in_notifications():
         assert "🇨🇼 Curaçao 33%</blockquote>" in output
 
 
+def test_goal_notification_uses_incident_score_after_when_event_score_lags():
+    from worldcupquente.formatters import format_goal_notification
+
+    event = _win_probability_event()
+    event["competitions"][0]["competitors"][0]["score"] = "0"
+    event["competitions"][0]["competitors"][1]["score"] = "0"
+    goal = {
+        "clock": {"displayValue": "20'"},
+        "athletesInvolved": [{"displayName": "Emam Ashour"}],
+        "scoreAfter": {"home": 0, "away": 1},
+    }
+
+    output = format_goal_notification(event, goal, language="pt")
+
+    assert "🇩🇪 Alemanha 0 x 1 🇨🇼 Curaçao" in output
+    assert "🇩🇪 Alemanha 0 x 0 🇨🇼 Curaçao" not in output
+
+
 def test_win_probability_is_omitted_when_odds_are_null():
     from worldcupquente.formatters import format_live_games
 
@@ -347,4 +381,38 @@ def _win_probability_event(state: str = "in", top_level_odds: bool = False) -> d
         "winProbability": win_probability,
     }
     return event
-    return event
+
+
+def _live_event_with_ratings() -> dict[str, object]:
+    return {
+        "date": "2026-06-12T19:00:00Z",
+        "competitions": [
+            {
+                "status": {
+                    "type": {"state": "in", "shortDetail": "First Half"},
+                    "displayClock": "22'",
+                },
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "home", "displayName": "Netherlands", "abbreviation": "NED"},
+                        "score": "1",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "away", "displayName": "Japan", "abbreviation": "JPN"},
+                        "score": "0",
+                    },
+                ],
+                "venue": {"fullName": "BMO Field"},
+            }
+        ],
+        "sofascorePlayerRatings": {
+            "home": [
+                {"name": "Home Player", "shirtNumber": 8, "substitute": False, "rating": 7.8},
+            ],
+            "away": [
+                {"name": "Away Player", "shirtNumber": 10, "substitute": True, "rating": 10.0},
+            ],
+        },
+    }

@@ -21,9 +21,11 @@ from worldcupquente.event_incidents import (
 from worldcupquente.formatters import (
     format_full_time_notification_rich,
     format_goal_notification,
+    format_history_player_ratings,
     format_kickoff_notification,
     format_match_status_notification,
     format_penalty_notification,
+    format_player_ratings_table,
     format_pre_game_notification,
     format_red_card_notification,
     format_standings_group_table,
@@ -53,6 +55,7 @@ LIVE_SCORE_SNAPSHOTS_KEY = "live_score_snapshots"
 LIVE_MONITOR_TASK_KEY = "live_monitor_task"
 NOTIFICATION_PREFERENCES_KEY = "notification_preferences"
 PENDING_FULL_TIME_STANDINGS_KEY = "live_pending_full_time_standings"
+PENDING_PLAYER_RATINGS_KEY = "live_pending_player_ratings"
 STANDINGS_SNAPSHOTS_KEY = "live_standings_snapshots"
 PRE_GAME_NOTIFICATION_WINDOW = timedelta(minutes=5)
 KICKOFF_NOTIFICATION = "kickoff"
@@ -131,6 +134,7 @@ async def poll_live_notifications(application: Application) -> None:
         service,
     )
     await _send_pending_full_time_standings(application, preferences, service)
+    await _send_pending_player_ratings(application, preferences, service)
     await _send_pre_game_notifications(
         application,
         pre_game_notifications,
@@ -187,16 +191,28 @@ def _collect_live_notifications(
             and previous_score is not None
             and _score_regressed(previous_score, current_score)
         )
-        if score_regressed:
+        official_goals = _sofascore_goal_details(event)
+        if _is_full_time_event(event):
+            for detail in official_goals:
+                _remember_goal(seen_goal_ids, event, detail)
+        elif official_goals:
+            for detail in official_goals:
+                if _is_penalty_detail(detail):
+                    scored_penalty_goal_keys.add(_play_match_key(event, detail))
+                if _goal_already_seen(seen_goal_ids, event, detail):
+                    continue
+                _remember_goal(seen_goal_ids, event, detail)
+                if is_bootstrapped:
+                    notifications.append((GOAL_NOTIFICATION, event, detail))
+        elif score_regressed:
             score_snapshots[event_id] = current_score
         elif current_score is not None and previous_score is not None:
             for detail in _score_change_details(event, previous_score, current_score):
-                goal_id = _goal_id(event, detail)
                 if _is_penalty_detail(detail):
                     scored_penalty_goal_keys.add(_play_match_key(event, detail))
-                if goal_id in seen_goal_ids:
+                if _goal_already_seen(seen_goal_ids, event, detail):
                     continue
-                seen_goal_ids.add(goal_id)
+                _remember_goal(seen_goal_ids, event, detail)
                 if is_bootstrapped:
                     notifications.append((GOAL_NOTIFICATION, event, detail))
         if current_score is not None:
@@ -382,6 +398,10 @@ async def _send_status_notifications(
                         )
                     except Exception:
                         logger.exception("Failed to send rich full-time notification")
+                        if event.get("sofascorePlayerRatings"):
+                            event_id = str(event.get("id", ""))
+                            if event_id:
+                                _pending_player_ratings(application)[event_id] = {"event": event}
                         await application.bot.send_message(
                             chat_id=chat_id,
                             text=(
@@ -409,6 +429,8 @@ async def _send_status_notifications(
                     "event": event,
                     "initial_records": {},
                 }
+                if not event.get("sofascorePlayerRatings"):
+                    _pending_player_ratings(application)[event_id] = {"event": event}
 
 
 async def _send_pending_full_time_standings(
@@ -456,8 +478,79 @@ async def _send_pending_full_time_standings(
             _standings_snapshots(application).pop(event_id, None)
 
 
+async def _send_pending_player_ratings(
+    application: Application,
+    preferences: NotificationPreferences,
+    service: WorldCupService,
+) -> None:
+    pending = _pending_player_ratings(application)
+    for event_id, pending_item in list(pending.items()):
+        fallback_event = pending_item.get("event", {})
+        chat_ids = preferences.enabled_chat_ids(
+            FULL_TIME_NOTIFICATION,
+            service.settings.live_notification_chat_ids,
+            _event_team_ids(fallback_event),
+        )
+        if not chat_ids:
+            pending.pop(event_id, None)
+            continue
+
+        try:
+            event = await service.get_finished_event_details(event_id)
+        except Exception:
+            logger.warning("Failed to fetch pending player ratings", extra={"event_id": event_id})
+            continue
+        if not event or not event.get("sofascorePlayerRatings"):
+            continue
+
+        failed = False
+        for chat_id in chat_ids:
+            language = preferences.get_language(chat_id)
+            try:
+                await _send_player_ratings_notification(application, chat_id, event, language)
+            except Exception:
+                failed = True
+                logger.exception("Failed to send pending player ratings")
+        if not failed:
+            pending.pop(event_id, None)
+
+
+async def _send_player_ratings_notification(
+    application: Application,
+    chat_id: int | str,
+    event: dict[str, Any],
+    language: str,
+) -> None:
+    ratings_table = format_player_ratings_table(event, language=language)
+    if ratings_table:
+        try:
+            await application.bot.do_api_request(
+                "sendRichMessage",
+                api_kwargs={
+                    "chat_id": chat_id,
+                    "rich_message": {
+                        "html": ratings_table,
+                        "skip_entity_detection": True,
+                    },
+                },
+            )
+            return
+        except Exception:
+            logger.exception("Failed to send rich player ratings notification")
+
+    await application.bot.send_message(
+        chat_id=chat_id,
+        text=format_history_player_ratings(event, language),
+        parse_mode=ParseMode.HTML,
+    )
+
+
 def _pending_full_time_standings(application: Application) -> dict[str, dict[str, Any]]:
     return application.bot_data.setdefault(PENDING_FULL_TIME_STANDINGS_KEY, {})
+
+
+def _pending_player_ratings(application: Application) -> dict[str, dict[str, Any]]:
+    return application.bot_data.setdefault(PENDING_PLAYER_RATINGS_KEY, {})
 
 
 def _standings_snapshots(application: Application) -> dict[str, dict[str, tuple[int, int, int, int]]]:
@@ -544,7 +637,10 @@ async def _hydrate_notification_event(
     except Exception:
         logger.warning("Failed to hydrate notification event", extra={"event_id": event_id})
         return event
-    return await service.enrich_event_win_probability(event_from_summary(summary, fallback_event=event))
+    hydrated = event_from_summary(summary, fallback_event=event)
+    hydrated = await service.enrich_event_sofascore_incidents(hydrated)
+    hydrated = await service.enrich_event_sofascore_post_match(hydrated)
+    return await service.enrich_event_win_probability(hydrated)
 
 
 async def _updated_standings_group_for_event(
@@ -830,6 +926,71 @@ def _goal_id(event: dict[str, Any], detail: dict[str, Any]) -> str:
     )
 
 
+def _goal_already_seen(
+    seen_goal_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> bool:
+    return any(goal_id in seen_goal_ids for goal_id in _goal_tracking_ids(event, detail))
+
+
+def _remember_goal(
+    seen_goal_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> None:
+    seen_goal_ids.update(_goal_tracking_ids(event, detail))
+
+
+def _goal_tracking_ids(event: dict[str, Any], detail: dict[str, Any]) -> set[str]:
+    ids = {_goal_id(event, detail)}
+    event_id = str(event.get("id", ""))
+    team_id = str((detail.get("team") or {}).get("id", ""))
+    score_after = _goal_score_after_key(detail)
+    if event_id and score_after:
+        ids.add(f"goal-score:{event_id}:{score_after}")
+    if event_id and team_id and score_after:
+        ids.add(f"goal-score:{event_id}:{team_id}:{score_after}")
+
+    clock = detail.get("clock") or {}
+    minute = str(clock.get("value") or clock.get("displayValue") or "")
+    scorer = _goal_scorer_key(detail)
+    if event_id and team_id and minute and scorer:
+        ids.add(f"goal-minute:{event_id}:{team_id}:{minute}:{scorer}")
+    return ids
+
+
+def _goal_score_after_key(detail: dict[str, Any]) -> str:
+    score_after = detail.get("scoreAfter")
+    if isinstance(score_after, str):
+        return score_after.strip()
+    if isinstance(score_after, (list, tuple)) and len(score_after) >= 2:
+        return f"{score_after[0]}:{score_after[1]}"
+    if isinstance(score_after, dict):
+        home = _first_score_value(score_after, "home", "homeScore")
+        away = _first_score_value(score_after, "away", "awayScore")
+        if home is not None and away is not None:
+            return f"{home}:{away}"
+    return ""
+
+
+def _first_score_value(score: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in score:
+            return score[key]
+    return None
+
+
+def _goal_scorer_key(detail: dict[str, Any]) -> str:
+    athletes = detail.get("athletesInvolved") or [
+        participant.get("athlete") or {}
+        for participant in detail.get("participants", [])
+        if participant.get("athlete")
+    ]
+    scorer = (athletes or [{}])[0]
+    return str(scorer.get("id") or scorer.get("displayName") or scorer.get("fullName") or "")
+
+
 def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[str, Any]) -> str:
     if notification_type == PENALTY_NOTIFICATION:
         return _penalty_event_id(event, detail)
@@ -888,6 +1049,12 @@ def _is_penalty_detail(detail: dict[str, Any]) -> bool:
         ]
     ).lower()
     return "penalty" in text
+
+
+def _sofascore_goal_details(event: dict[str, Any]) -> list[dict[str, Any]]:
+    incidents = event.get("sofascoreIncidents") or {}
+    goals = incidents.get("goals", []) if isinstance(incidents, dict) else []
+    return goals if isinstance(goals, list) else []
 
 
 def _play_match_key(event: dict[str, Any], detail: dict[str, Any]) -> tuple[str, str, str]:

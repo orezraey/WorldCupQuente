@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.event_incidents import is_own_goal_play, scoring_plays_from_event
+from worldcupquente.formatters.games import format_player_ratings_table
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
     RED_CARD_EMOJI,
@@ -111,6 +112,9 @@ def format_full_time_notification_rich(
             )
         )
     ]
+    ratings_table = format_player_ratings_table(event, language=language)
+    if ratings_table:
+        blocks.append(ratings_table)
     if group is not None:
         blocks.append(format_standings_group_table(group, language))
     return "".join(blocks)
@@ -135,7 +139,7 @@ def _format_period_end_lines(
     lines = [
         f"<b>⏰ {text(header_key, language)}</b>",
         "",
-        f"⚽️ {_format_matchup(home, away, 'pre', language)}",
+        f"⚽️ {_format_matchup(home, away, _period_end_matchup_state(header_key), language)}",
     ]
     if event_time:
         lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
@@ -150,6 +154,10 @@ def _format_period_end_lines(
         lines.append("")
         lines.extend(win_probability_lines)
     return lines
+
+
+def _period_end_matchup_state(header_key: str) -> str:
+    return "post" if header_key == "second_half_end_header" else "in"
 
 
 def _rich_paragraph(lines: list[str]) -> str:
@@ -230,13 +238,57 @@ def format_goal_notification(
         header,
         f"👤 {escape(str(scorer))} ({escape(str(minute))})",
         "",
-        _format_matchup(home, away, str(state), language),
+        _format_goal_matchup(home, away, str(state), detail, language),
     ]
     win_probability_lines = format_win_probability(event, language)
     if win_probability_lines:
         lines.append("")
         lines.extend(win_probability_lines)
     return "\n".join(lines)
+
+
+def _format_goal_matchup(
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+    state: str,
+    detail: dict[str, Any],
+    language: str = "en",
+) -> str:
+    score_after = _score_after_values(detail)
+    if score_after is None:
+        return _format_matchup(home, away, state, language)
+
+    home_team = (home or {}).get("team", {})
+    away_team = (away or {}).get("team", {})
+    home_name = translated_team_name_html(home_team, language=language) if home_team else text("home", language)
+    away_name = translated_team_name_html(away_team, language=language) if away_team else text("away", language)
+    home_score, away_score = score_after
+    return f"{home_name} {escape(home_score)} x {escape(away_score)} {away_name}"
+
+
+def _score_after_values(detail: dict[str, Any]) -> tuple[str, str] | None:
+    score_after = detail.get("scoreAfter")
+    if isinstance(score_after, str):
+        separator = ":" if ":" in score_after else "-" if "-" in score_after else None
+        if separator is None:
+            return None
+        home_score, away_score = score_after.split(separator, 1)
+        return home_score.strip(), away_score.strip()
+    if isinstance(score_after, (list, tuple)) and len(score_after) >= 2:
+        return str(score_after[0]), str(score_after[1])
+    if isinstance(score_after, dict):
+        home_score = _first_present_score_value(score_after, "home", "homeScore")
+        away_score = _first_present_score_value(score_after, "away", "awayScore")
+        if home_score is not None and away_score is not None:
+            return str(home_score), str(away_score)
+    return None
+
+
+def _first_present_score_value(score: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in score:
+            return score[key]
+    return None
 
 
 def format_penalty_notification(

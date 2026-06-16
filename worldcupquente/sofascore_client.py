@@ -62,6 +62,28 @@ class SofaScoreClient:
         except RuntimeError:
             return []
 
+    async def get_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(f"/event/{event_id}/incidents")
+        except RuntimeError:
+            return []
+        incidents = data.get("incidents", [])
+        return incidents if isinstance(incidents, list) else []
+
+    async def get_match_lineups(self, event_id: int | str) -> dict[str, Any]:
+        try:
+            return await self.get_json(f"/event/{event_id}/lineups", quiet_statuses=(404,))
+        except RuntimeError:
+            return {}
+
+    async def get_match_statistics(self, event_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(f"/event/{event_id}/statistics", quiet_statuses=(404,))
+        except RuntimeError:
+            return []
+        statistics = data.get("statistics", [])
+        return statistics if isinstance(statistics, list) else []
+
     async def get_win_probability(self, event_id: int | str) -> dict[str, int] | None:
         try:
             data = await self.get_json(

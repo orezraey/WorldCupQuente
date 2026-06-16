@@ -7,6 +7,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.i18n import LANGUAGE_LABELS, text
 from worldcupquente.notification_preferences import (
     LANGUAGE_KEY,
@@ -19,6 +20,7 @@ from worldcupquente.team_translations import translated_team_name
 
 TEAMS_PAGE_SIZE = 12
 CALENDAR_GAMES_PAGE_SIZE = 6
+HISTORY_GAMES_PAGE_SIZE = 6
 
 
 def build_standings_groups_keyboard(
@@ -106,10 +108,64 @@ def build_calendar_menu_keyboard(language: str = "en") -> InlineKeyboardMarkup:
     )
 
 
-def build_live_stats_keyboard(show_stats: bool = False, language: str = "en") -> InlineKeyboardMarkup:
+def build_live_stats_keyboard(
+    show_stats: bool = False,
+    show_ratings: bool = False,
+    language: str = "en",
+) -> InlineKeyboardMarkup:
     label = text("hide_stats" if show_stats else "stats", language)
     action = "hide" if show_stats else "show"
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"live:stats:{action}")]])
+    rows = [[InlineKeyboardButton(label, callback_data=f"live:stats:{action}")]]
+    if show_stats:
+        ratings_label = text("hide_player_ratings" if show_ratings else "player_ratings_short", language)
+        ratings_action = "hide" if show_ratings else "show"
+        rows.append([InlineKeyboardButton(ratings_label, callback_data=f"live:ratings:{ratings_action}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_history_games_keyboard(
+    events: list[dict[str, Any]],
+    page: int,
+    total_pages: int,
+    tz: Any,
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                _history_event_label(event, tz, language),
+                callback_data=f"hist:game:{event.get('id')}:{page}",
+            )
+        ]
+        for event in events
+        if event.get("id")
+    ]
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton(text("previous", language), callback_data=f"hist:page:{page - 1}"))
+    if page < total_pages - 1:
+        navigation.append(InlineKeyboardButton(text("next", language), callback_data=f"hist:page:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
+    return InlineKeyboardMarkup(rows)
+
+
+def build_history_game_keyboard(event_id: str, page: int, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text("sofascore_stats", language), callback_data=f"hist:stats:{event_id}:{page}"),
+                InlineKeyboardButton(text("player_ratings", language), callback_data=f"hist:ratings:{event_id}:{page}"),
+            ],
+            [InlineKeyboardButton(text("back_to_history", language), callback_data=f"hist:page:{page}")],
+        ]
+    )
+
+
+def build_history_back_to_game_keyboard(event_id: str, page: int, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text("back_to_match", language), callback_data=f"hist:game:{event_id}:{page}")]]
+    )
 
 
 def build_notification_config_keyboard(settings: dict[str, Any], language: str = "en") -> InlineKeyboardMarkup:
@@ -232,6 +288,20 @@ def _format_date_label(date_param: str, language: str = "en") -> str:
     except ValueError:
         return date_param
     return f"{weekdays[date.weekday()]} {date.strftime('%d/%m')}"
+
+
+def _history_event_label(event: dict[str, Any], tz: Any, language: str = "en") -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = next((item for item in competitors if item.get("homeAway") == "home"), competitors[0] if competitors else {})
+    away = next((item for item in competitors if item.get("homeAway") == "away"), competitors[1] if len(competitors) > 1 else {})
+    home_team = home.get("team") or {}
+    away_team = away.get("team") or {}
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    date_text = event_time.strftime("%d/%m") if event_time else "--/--"
+    home_name = translated_team_name(home_team, language=language) if home_team else text("home", language)
+    away_name = translated_team_name(away_team, language=language) if away_team else text("away", language)
+    return f"{date_text} · {home_name} {home.get('score', '-')} x {away.get('score', '-')} {away_name}"
 
 
 def _standings_group_label(group: dict[str, Any], language: str = "en") -> str:

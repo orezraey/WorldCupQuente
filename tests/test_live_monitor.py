@@ -20,6 +20,7 @@ from worldcupquente.live_monitor import (
     _remember_active_standings_snapshots,
     _send_incident_notifications,
     _send_pending_full_time_standings,
+    _send_pending_player_ratings,
     _send_status_notifications,
 )
 from worldcupquente.notification_preferences import (
@@ -49,7 +50,7 @@ def test_collect_live_notifications_bootstrap_records_without_sending():
 
     assert notifications == []
     assert penalty_goal_keys == set()
-    assert len(state.seen_goal_ids) == 1
+    assert state.seen_goal_ids
     assert state.score_snapshots["match-1"] == (1, 0)
 
 
@@ -93,6 +94,116 @@ def test_collect_live_notifications_sends_only_goal_for_converted_penalty():
 
     assert [notification[0] for notification in notifications] == [GOAL_NOTIFICATION]
     assert _play_match_key(event, detail) in penalty_goal_keys
+
+
+def test_collect_live_notifications_uses_sofascore_goal_without_score_change():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (1, 0)},
+        is_bootstrapped=True,
+    )
+    detail = _goal_detail()
+    detail["id"] = "sofascore:goal-1"
+    detail["source"] = "sofascore"
+    event = _event_with_score(score=(1, 0), details=[])
+    event["sofascoreIncidents"] = {"goals": [detail], "redCards": []}
+
+    notifications, penalty_goal_keys = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [GOAL_NOTIFICATION]
+    assert notifications[0][2]["source"] == "sofascore"
+    assert penalty_goal_keys == set()
+    assert state.score_snapshots["match-1"] == (1, 0)
+
+
+def test_collect_live_notifications_deduplicates_score_change_when_sofascore_arrives_later():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    score_change_event = _event_with_score(score=(1, 0), details=[])
+    sofascore_detail = _goal_detail()
+    sofascore_detail["id"] = "sofascore:goal-1"
+    sofascore_detail["source"] = "sofascore"
+    sofascore_detail["scoreAfter"] = "1:0"
+    sofascore_event = _event_with_score(score=(1, 0), details=[])
+    sofascore_event["sofascoreIncidents"] = {"goals": [sofascore_detail], "redCards": []}
+
+    first_notifications, _ = _collect_live_notifications([score_change_event], state)
+    second_notifications, _ = _collect_live_notifications([sofascore_event], state)
+
+    assert [notification[0] for notification in first_notifications] == [GOAL_NOTIFICATION]
+    assert second_notifications == []
+
+
+def test_collect_live_notifications_skips_sofascore_goals_after_full_time():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (1, 1)},
+        is_bootstrapped=True,
+    )
+    detail = _goal_detail()
+    detail["source"] = "sofascore"
+    detail["scoreAfter"] = "0:1"
+    event = _event_with_score(score=(1, 1), details=[])
+    event["competitions"][0]["status"] = {
+        "displayClock": "FT",
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+    }
+    event["sofascoreIncidents"] = {"goals": [detail], "redCards": []}
+
+    notifications, _ = _collect_live_notifications([event], state)
+
+    assert notifications == []
+    assert state.seen_goal_ids
+
+
+def test_collect_live_notifications_deduplicates_own_goal_when_team_differs_later():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 1)},
+        is_bootstrapped=True,
+    )
+    score_change_event = _event_with_score(score=(1, 1), details=[])
+    sofascore_detail = _goal_detail()
+    sofascore_detail["id"] = "sofascore:own-goal-1"
+    sofascore_detail["source"] = "sofascore"
+    sofascore_detail["team"] = {"id": "away"}
+    sofascore_detail["scoreAfter"] = "1:1"
+    sofascore_detail["ownGoal"] = True
+    sofascore_event = _event_with_score(score=(1, 1), details=[])
+    sofascore_event["sofascoreIncidents"] = {"goals": [sofascore_detail], "redCards": []}
+
+    first_notifications, _ = _collect_live_notifications([score_change_event], state)
+    second_notifications, _ = _collect_live_notifications([sofascore_event], state)
+
+    assert [notification[0] for notification in first_notifications] == [GOAL_NOTIFICATION]
+    assert second_notifications == []
 
 
 def test_collect_live_notifications_deduplicates_penalty_text_updates():
@@ -359,10 +470,23 @@ def test_status_notifications_use_period_end_format_in_portuguese():
 
     assert app.bot.messages[0]["text"] == (
         "<b>⏰ Final do Primeiro Tempo</b>\n\n"
-        "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão\n"
+        "⚽️ 🇳🇱 Países Baixos 0 x 0 🇯🇵 Japão\n"
         "🕒 14/06 17:00\n"
         "🏟 Estádio: AT&amp;T Stadium"
     )
+
+
+def test_halftime_notification_shows_current_score():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "HT")
+    event["competitions"][0]["competitors"][0]["score"] = "0"
+    event["competitions"][0]["competitors"][1]["score"] = "1"
+
+    asyncio.run(_send_status_notifications(app, [(HALFTIME_NOTIFICATION, event)], preferences, service))
+
+    assert "⚽️ 🇳🇱 Países Baixos 0 x 1 🇯🇵 Japão" in app.bot.messages[0]["text"]
 
 
 def test_halftime_notifications_keep_win_probability_when_odds_exist():
@@ -431,12 +555,40 @@ def test_full_time_notifications_use_second_half_end_format_in_portuguese():
 
     html = app.bot.rich_messages[0]["rich_message"]["html"]
     assert "<b>⏰ Final do Segundo Tempo</b>" in html
-    assert "⚽️ 🇳🇱 Países Baixos x 🇯🇵 Japão" in html
+    assert "⚽️ 🇳🇱 Países Baixos 0 x 0 🇯🇵 Japão" in html
     assert "🕒 14/06 17:00" in html
     assert "🏟 Estádio: AT&amp;T Stadium" in html
     assert "⚽️ Cody Gakpo 31&#x27;, ⚽️ 45&#x27;+2&#x27;" in html
     assert "⚽️ Ko Itakura 60&#x27; (GC)" in html
     assert "Probabilidade de vitória" not in html
+
+
+def test_full_time_notification_shows_final_score():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("post", "FT", completed=True)
+    event["competitions"][0]["competitors"][0]["score"] = "1"
+    event["competitions"][0]["competitors"][1]["score"] = "2"
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    html = app.bot.rich_messages[0]["rich_message"]["html"]
+    assert "⚽️ 🇳🇱 Países Baixos 1 x 2 🇯🇵 Japão" in html
+
+
+def test_full_time_rich_failure_queues_available_player_ratings():
+    app = _FakeApplication()
+    app.bot.fail_rich_messages = True
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("post", "FT", completed=True)
+    event["sofascorePlayerRatings"] = _player_ratings()
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    assert app.bot.messages
+    assert set(app.bot_data["live_pending_player_ratings"]) == {"match-period"}
 
 
 def test_full_time_summary_sends_before_standings_are_updated():
@@ -501,6 +653,21 @@ def test_pending_full_time_standings_send_when_api_already_updated_using_active_
     assert [message["chat_id"] for message in table_messages] == [1, 2]
     assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
     assert app.bot_data[STANDINGS_SNAPSHOTS_KEY] == {}
+
+
+def test_pending_player_ratings_falls_back_to_plain_message_when_rich_fails():
+    app = _FakeApplication()
+    app.bot.fail_rich_messages = True
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _period_status_event("post", "FT", completed=True)
+    service = _FakeService(finished_event={**event, "sofascorePlayerRatings": _player_ratings()})
+    app.bot_data["live_pending_player_ratings"] = {"match-period": {"event": event}}
+
+    asyncio.run(_send_pending_player_ratings(app, preferences, service))
+
+    assert app.bot_data["live_pending_player_ratings"] == {}
+    assert app.bot.messages
+    assert "Notas SofaScore" in app.bot.messages[0]["text"]
 
 
 def _event_with_score(
@@ -705,6 +872,13 @@ def _standings_entry(team_id: str, team_name: str, record: tuple[int, int, int, 
     }
 
 
+def _player_ratings() -> dict[str, list[dict[str, Any]]]:
+    return {
+        "home": [{"name": "Home Player", "shirtNumber": 8, "rating": 7.8}],
+        "away": [{"name": "Away Player", "shirtNumber": 10, "rating": 7.2}],
+    }
+
+
 @dataclass
 class _FakeSettings:
     live_notification_chat_ids: tuple[int, ...] = (1, 2)
@@ -714,10 +888,21 @@ class _FakeService:
     settings = _FakeSettings()
     bot_timezone = ZoneInfo("UTC")
 
-    def __init__(self, groups: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        groups: list[dict[str, Any]] | None = None,
+        finished_event: dict[str, Any] | None = None,
+    ) -> None:
         self.groups = groups or []
+        self.finished_event = finished_event
 
     async def enrich_event_win_probability(self, event: dict[str, Any]) -> dict[str, Any]:
+        return event
+
+    async def enrich_event_sofascore_incidents(self, event: dict[str, Any]) -> dict[str, Any]:
+        return event
+
+    async def enrich_event_sofascore_post_match(self, event: dict[str, Any]) -> dict[str, Any]:
         return event
 
     async def get_event_summary(self, event_id: str) -> dict[str, Any]:
@@ -737,6 +922,10 @@ class _FakeService:
     async def get_standings_groups(self, use_cache: bool = True) -> list[dict[str, Any]]:
         del use_cache
         return self.groups
+
+    async def get_finished_event_details(self, event_id: str) -> dict[str, Any] | None:
+        del event_id
+        return self.finished_event
 
 
 class _FakePreferences:
@@ -770,9 +959,12 @@ class _FakeBot:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
         self.rich_messages: list[dict[str, Any]] = []
+        self.fail_rich_messages = False
 
     async def send_message(self, **kwargs: Any) -> None:
         self.messages.append(kwargs)
 
     async def do_api_request(self, _method: str, api_kwargs: dict[str, Any]) -> None:
+        if self.fail_rich_messages:
+            raise RuntimeError("rich failed")
         self.rich_messages.append(api_kwargs)

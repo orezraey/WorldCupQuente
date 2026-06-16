@@ -6,6 +6,10 @@ from typing import Any
 
 
 def scoring_plays_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    sofascore_goals = _sofascore_incident_group(event, "goals")
+    if sofascore_goals:
+        return _dedupe_goal_plays(sofascore_goals)
+
     competition = (event.get("competitions") or [{}])[0]
     plays = [
         detail
@@ -32,6 +36,10 @@ def penalty_plays_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def red_cards_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    sofascore_red_cards = _sofascore_incident_group(event, "redCards")
+    if sofascore_red_cards:
+        return _dedupe_player_events(sofascore_red_cards)
+
     red_cards: list[dict[str, Any]] = []
     red_cards.extend(_red_cards_from_details(event))
     red_cards.extend(_red_cards_from_commentary(event))
@@ -53,6 +61,12 @@ def is_own_goal_play(play: dict[str, Any]) -> bool:
         ]
     ).lower()
     return "own goal" in text
+
+
+def _sofascore_incident_group(event: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    incidents = event.get("sofascoreIncidents") or {}
+    group = incidents.get(name, []) if isinstance(incidents, dict) else []
+    return group if isinstance(group, list) else []
 
 
 def _dedupe_goal_plays(plays: list[dict[str, Any]]) -> list[dict[str, Any]]:

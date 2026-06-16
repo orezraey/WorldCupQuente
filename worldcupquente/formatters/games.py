@@ -30,6 +30,81 @@ from worldcupquente.formatters.utils import (
 from worldcupquente.i18n import format_duration, text
 from worldcupquente.team_translations import translated_team_name_html
 
+SOFASCORE_RATINGS_TITLE_EMOJI = '<tg-emoji emoji-id="5431497092281421497">⭐</tg-emoji>'
+SOFASCORE_RATING_EMOJI_IDS = {
+    "10": "5280826091894755088",
+    "9.9": "5280749757441003265",
+    "9.8": "5280693158361977151",
+    "9.7": "5280625362303209424",
+    "9.6": "5280950925119214104",
+    "9.5": "5281014074023370266",
+    "9.4": "5280973001251116677",
+    "9.3": "5280546111566664917",
+    "9.2": "5280622652178844121",
+    "9.1": "5280779401305281374",
+    "9.0": "5280757789029847623",
+    "8.9": "5280671726475170158",
+    "8.8": "5280827818471608636",
+    "8.7": "5280601194522235834",
+    "8.6": "5283126016816991158",
+    "8.5": "5280553760903419760",
+    "8.4": "5280616050814113762",
+    "8.3": "5280785835166292486",
+    "8.2": "5281025086319515627",
+    "8.1": "5280942326594688686",
+    "8.0": "5280949769773012061",
+    "7.9": "5280528862978003478",
+    "7.8": "5283257193708147680",
+    "7.7": "5280583666760701153",
+    "7.6": "5283005813567278868",
+    "7.5": "5283010220203724344",
+    "7.4": "5280781050572723088",
+    "7.3": "5282977355113980089",
+    "7.2": "5280483160231007394",
+    "7.1": "5280693115412303532",
+    "7.0": "5280599781477996703",
+    "6.9": "5280542258980999980",
+    "6.8": "5280663424303388569",
+    "6.7": "5280813799698377437",
+    "6.6": "5280794721453626393",
+    "6.5": "5280709685396135826",
+    "6.4": "5280698539955999929",
+    "6.3": "5280842932461524700",
+    "6.2": "5280668651278589611",
+    "6.1": "5283047659433643113",
+    "6.0": "5282724798152068931",
+    "5.9": "5353012449052219996",
+    "5.8": "5354941207195702386",
+    "5.7": "5352825420406350207",
+    "5.6": "5352582690329619372",
+    "5.5": "5352787882392181661",
+    "5.4": "5353047633424308568",
+    "5.3": "5355013916697056243",
+    "5.2": "5355074265282533942",
+    "5.1": "5352652900160002943",
+    "5.0": "5352897657461300767",
+    "4.9": "5352825635154714322",
+    "4.8": "5353047216812481766",
+    "4.7": "5352836033270539498",
+    "4.6": "5352801763726484430",
+    "4.5": "5352798473781533222",
+    "4.4": "5352933825380898625",
+    "4.3": "5352639783329882341",
+    "4.2": "5352907570245818583",
+    "4.1": "5355248692494358601",
+    "4.0": "5353014325952929517",
+    "3.9": "5352910306139987530",
+    "3.8": "5352771114839855445",
+    "3.7": "5352697176977860571",
+    "3.6": "5352902377630358028",
+    "3.5": "5355228686536695744",
+    "3.4": "5354899962624760596",
+    "3.3": "5354785510336255431",
+    "3.2": "5355204450036242031",
+    "3.1": "5352551401492867711",
+    "3.0": "5354929713863219313",
+}
+
 
 def format_today_games(scoreboard: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
     events = scoreboard.get("events", [])
@@ -58,7 +133,12 @@ def format_live_games(
     return "\n".join(lines).strip()
 
 
-def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo, language: str = "en") -> str:
+def format_live_games_rich(
+    events: list[dict[str, Any]],
+    tz: ZoneInfo,
+    language: str = "en",
+    show_ratings: bool = False,
+) -> str:
     if not events:
         return f"<p>{text('live_empty', language)}</p>"
 
@@ -78,6 +158,10 @@ def format_live_games_rich(events: list[dict[str, Any]], tz: ZoneInfo, language:
         if stats_table:
             blocks.append(stats_table)
 
+        ratings_table = format_player_ratings_table(event, home, away, language) if show_ratings else None
+        if ratings_table:
+            blocks.append(ratings_table)
+
     return "".join(blocks)
 
 
@@ -96,6 +180,122 @@ def format_games(
         lines.extend(_format_event(event, tz, language))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def format_history_games(
+    events: list[dict[str, Any]],
+    page: int,
+    total_pages: int,
+    language: str = "en",
+) -> str:
+    if not events:
+        return text("history_empty", language)
+    return "\n".join(
+        [
+            f"<b>{text('history_title', language)}</b>",
+            text("history_body", language),
+            text("page", language, page=page + 1, total_pages=total_pages),
+        ]
+    )
+
+
+def format_history_game_details(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    venue = competition.get("venue", {}) or event.get("venue", {})
+    venue_name = venue.get("fullName") or venue.get("displayName")
+
+    lines = [
+        f"<b>{text('match_details', language)}</b>",
+        "",
+        f"⚽️ {_format_matchup(home, away, 'post', language)}",
+    ]
+    if event_time:
+        lines.append(f"🕒 {escape(event_time.strftime('%d/%m %H:%M'))}")
+    if venue_name:
+        lines.append(f"🏟 {text('stadium', language)}: {escape(str(venue_name))}")
+
+    goal_lines = _format_live_goals(event, language)
+    if goal_lines:
+        lines.append("")
+        lines.extend(goal_lines)
+
+    red_card_lines = _format_live_red_cards(event, language)
+    if red_card_lines:
+        lines.append("")
+        lines.extend(red_card_lines)
+    return "\n".join(lines)
+
+
+def format_history_statistics(event: dict[str, Any], language: str = "en") -> str:
+    rows = event.get("sofascoreStatistics") or []
+    if not rows:
+        return text("sofascore_stats_unavailable", language)
+
+    lines = [f"<b>📊 {text('sofascore_stats', language)}</b>"]
+    for row in rows:
+        key = str(row.get("key") or "")
+        label = _sofascore_stat_label(key, row.get("name"), language)
+        lines.append(
+            f"{escape(label)}: {escape(str(row.get('home') or '-'))} x {escape(str(row.get('away') or '-'))}"
+        )
+    return "\n".join(lines)
+
+
+def format_history_player_ratings(event: dict[str, Any], language: str = "en") -> str:
+    lines = _format_player_ratings_lines(event, language)
+    if not lines:
+        return text("player_ratings_unavailable", language)
+    return "\n".join(lines)
+
+
+def format_player_ratings_table(
+    event: dict[str, Any],
+    home: dict[str, Any] | None = None,
+    away: dict[str, Any] | None = None,
+    language: str = "en",
+) -> str | None:
+    ratings = event.get("sofascorePlayerRatings") or {}
+    if not isinstance(ratings, dict) or not (ratings.get("home") or ratings.get("away")):
+        return None
+
+    if home is None or away is None:
+        competition = (event.get("competitions") or [{}])[0]
+        competitors = competition.get("competitors", [])
+        home = home or _find_competitor(competitors, "home")
+        away = away or _find_competitor(competitors, "away")
+
+    home_team = (home or {}).get("team") or {}
+    away_team = (away or {}).get("team") or {}
+    home_name = translated_team_name_html(home_team, language=language) if home_team else text("home", language)
+    away_name = translated_team_name_html(away_team, language=language) if away_team else text("away", language)
+    home_players = ratings.get("home") or []
+    away_players = ratings.get("away") or []
+    max_rows = max(len(home_players), len(away_players))
+
+    lines = [
+        "<table bordered striped>",
+        "<tr>"
+        f"<th>{home_name}</th>"
+        f"<th>{SOFASCORE_RATINGS_TITLE_EMOJI} {text('player_ratings_short', language)}</th>"
+        f"<th>{away_name}</th>"
+        "</tr>",
+    ]
+    for index in range(max_rows):
+        home_player = home_players[index] if index < len(home_players) else None
+        away_player = away_players[index] if index < len(away_players) else None
+        lines.append(
+            "<tr>"
+            f'<td align="left">{_format_rating_table_player(home_player, language)}</td>'
+            f'<td align="center">{escape(text("player_ratings_short", language))}</td>'
+            f'<td align="right">{_format_rating_table_player(away_player, language)}</td>'
+            "</tr>"
+        )
+    lines.append("</table>")
+    return "".join(lines)
 
 
 def _format_event(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> list[str]:
@@ -247,6 +447,87 @@ def _format_live_red_cards(event: dict[str, Any], language: str = "en") -> list[
         suffix = f" {escape(str(minute))}" if minute else ""
         lines.append(f"{RED_CARD_EMOJI} {escape(str(player_name))}{suffix}")
     return lines
+
+
+def _format_player_ratings_lines(event: dict[str, Any], language: str = "en") -> list[str]:
+    ratings = event.get("sofascorePlayerRatings") or {}
+    if not isinstance(ratings, dict):
+        return []
+
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    lines = [f"<b>⭐ {text('player_ratings', language)}</b>"]
+    for side in ("home", "away"):
+        players = ratings.get(side) or []
+        if not players:
+            continue
+        competitor = _find_competitor(competitors, side)
+        team = (competitor or {}).get("team") or {}
+        lines.append("")
+        lines.append(f"<b>{translated_team_name_html(team, language=language)}</b>")
+        for player in players:
+            shirt = player.get("shirtNumber")
+            shirt_text = f"#{escape(str(shirt))} " if shirt not in (None, "") else ""
+            substitute = f" ({text('substitute_short', language)})" if player.get("substitute") else ""
+            lines.append(
+                f"{shirt_text}{escape(str(player.get('name') or text('player_unavailable', language)))}"
+                f"{substitute}: <b>{_format_rating(player.get('rating'))}</b>"
+            )
+    return lines if len(lines) > 1 else []
+
+
+def _format_rating(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _format_rating_table_player(player: dict[str, Any] | None, language: str = "en") -> str:
+    if not player:
+        return "-"
+    shirt = player.get("shirtNumber")
+    shirt_text = f"#{escape(str(shirt))} " if shirt not in (None, "") else ""
+    name = escape(str(player.get("name") or "-"))
+    substitute = f" ({text('substitute_short', language)})" if player.get("substitute") else ""
+    return f"{_rating_emoji(player.get('rating'))} {shirt_text}{name}{substitute}"
+
+
+def _rating_emoji(value: Any) -> str:
+    rating = _rating_key(value)
+    if not rating:
+        return "-"
+    emoji_id = SOFASCORE_RATING_EMOJI_IDS.get(rating)
+    if emoji_id is None:
+        return escape(rating)
+    return f'<tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji>'
+
+
+def _rating_key(value: Any) -> str:
+    try:
+        rating = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if rating == 10:
+        return "10"
+    return f"{rating:.1f}"
+
+
+def _sofascore_stat_label(key: str, fallback: Any, language: str = "en") -> str:
+    label_keys = {
+        "ballPossession": "possession",
+        "expectedGoals": "expected_goals",
+        "bigChanceCreated": "big_chances",
+        "totalShotsOnGoal": "shots",
+        "shotsOnGoal": "on_target",
+        "goalkeeperSaves": "saves",
+        "cornerKicks": "corners",
+        "fouls": "fouls",
+        "yellowCards": "yellow_cards",
+        "redCards": "red_cards",
+    }
+    label_key = label_keys.get(key)
+    return text(label_key, language) if label_key else str(fallback or key)
 
 
 def _format_live_goals(event: dict[str, Any], language: str = "en") -> list[str]:

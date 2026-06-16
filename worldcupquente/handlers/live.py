@@ -67,7 +67,12 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-async def _send_live_games(query: Any, context: ContextTypes.DEFAULT_TYPE, show_stats: bool) -> None:
+async def _send_live_games(
+    query: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    show_stats: bool,
+    show_ratings: bool = False,
+) -> None:
     service = _get_service(context)
     language = _get_query_language(query, context)
     try:
@@ -78,16 +83,27 @@ async def _send_live_games(query: Any, context: ContextTypes.DEFAULT_TYPE, show_
         return
 
     if show_stats and events and query.message is not None:
-        await context.bot.do_api_request(
-            "editMessageText",
+        if show_ratings:
+            events = await service.enrich_events_sofascore_player_ratings(events)
+        await context.bot.edit_message_text(
+            text="\u200b",
+            chat_id=query.message.chat_id,
+            message_id=query.message.message_id,
+            reply_markup=build_live_stats_keyboard(
+                show_stats=True,
+                show_ratings=show_ratings,
+                language=language,
+            ),
             api_kwargs={
-                "chat_id": query.message.chat_id,
-                "message_id": query.message.message_id,
                 "rich_message": {
-                    "html": format_live_games_rich(events, service.bot_timezone, language),
+                    "html": format_live_games_rich(
+                        events,
+                        service.bot_timezone,
+                        language,
+                        show_ratings=show_ratings,
+                    ),
                     "skip_entity_detection": True,
                 },
-                "reply_markup": build_live_stats_keyboard(show_stats=True, language=language),
             },
         )
         return
@@ -108,3 +124,10 @@ async def _send_live_games(query: Any, context: ContextTypes.DEFAULT_TYPE, show_
 async def handle_live_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.data.startswith("live:stats:"):
         await _send_live_games(query, context, show_stats=query.data.endswith(":show"))
+    elif query.data.startswith("live:ratings:"):
+        await _send_live_games(
+            query,
+            context,
+            show_stats=True,
+            show_ratings=query.data.endswith(":show"),
+        )
