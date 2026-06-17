@@ -216,7 +216,7 @@ def test_scoring_plays_from_commentary_fallback():
     assert goals[0]["clock"]["displayValue"] == "30'"
 
 
-def test_penalty_plays_from_event():
+def test_penalty_plays_ignores_espn_penalty_text_without_sofascore():
     event = {
         "competitions": [
             {
@@ -233,27 +233,19 @@ def test_penalty_plays_from_event():
         "scoringPlays": []
     }
 
-    penalties = penalty_plays_from_event(event)
-    assert len(penalties) == 1
-    assert penalties[0]["clock"]["displayValue"] == "60'"
+    assert penalty_plays_from_event(event) == []
 
 
-def test_penalty_plays_deduplicates_same_minute_variants():
+def test_penalty_plays_ignores_espn_var_checking_penalty_text():
     event = {
         "competitions": [
             {
                 "details": [
                     {
-                        "type": {"type": "penalty", "text": "Penalty"},
+                        "type": {"type": "var", "text": "VAR Checking"},
                         "team": {"id": "home"},
-                        "clock": {"displayValue": "14'"},
-                        "text": "Penalty conceded by Mahmoud Abunada after a foul in the penalty area.",
-                    },
-                    {
-                        "type": {"type": "penalty", "text": "Penalty"},
-                        "team": {"id": "away"},
-                        "clock": {"displayValue": "14'"},
-                        "text": "Penalty Switzerland. Remo Freuler draws a foul in the penalty area.",
+                        "clock": {"displayValue": "60'"},
+                        "text": "VAR Checking: France Penalty.",
                     },
                 ]
             }
@@ -261,10 +253,7 @@ def test_penalty_plays_deduplicates_same_minute_variants():
         "scoringPlays": [],
     }
 
-    penalties = penalty_plays_from_event(event)
-
-    assert len(penalties) == 1
-    assert penalties[0]["team"]["id"] == "away"
+    assert penalty_plays_from_event(event) == []
 
 
 def test_penalty_plays_ignores_converted_penalty_goal():

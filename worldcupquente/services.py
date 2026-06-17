@@ -139,7 +139,7 @@ class WorldCupService:
                 incidents,
                 reversed_match=bool(mapping.get("reversed")),
             )
-            if normalized["goals"] or normalized["redCards"]:
+            if normalized["goals"] or normalized["disallowedGoals"] or normalized["penalties"] or normalized["redCards"]:
                 event["sofascoreIncidents"] = normalized
         except Exception as e:
             logger.warning(f"Failed to enrich event with SofaScore incidents: {e}")
@@ -527,16 +527,24 @@ def _normalize_sofascore_incidents(
     reversed_match: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     goals: list[dict[str, Any]] = []
+    disallowed_goals: list[dict[str, Any]] = []
+    penalties: list[dict[str, Any]] = []
     red_cards: list[dict[str, Any]] = []
     for incident in incidents:
         incident_type = str(_incident_value(incident, "type", "incidentType", "incident_type") or "")
         if incident_type == "goal":
             goals.append(_normalize_sofascore_goal(event, incident, reversed_match))
+        elif _is_sofascore_disallowed_goal(incident_type, incident):
+            disallowed_goals.append(_normalize_sofascore_disallowed_goal(event, incident, reversed_match))
+        elif _is_sofascore_penalty(incident_type, incident):
+            penalties.append(_normalize_sofascore_penalty(event, incident, reversed_match))
         elif incident_type == "card" and _is_sofascore_red_card(incident):
             red_cards.append(_normalize_sofascore_red_card(event, incident, reversed_match))
 
     return {
         "goals": sorted(goals, key=_goal_clock_sort_key),
+        "disallowedGoals": sorted(disallowed_goals, key=_goal_clock_sort_key),
+        "penalties": sorted(penalties, key=_goal_clock_sort_key),
         "redCards": sorted(red_cards, key=_goal_clock_sort_key),
     }
 
@@ -567,6 +575,25 @@ def _normalize_sofascore_goal(
     }
 
 
+def _normalize_sofascore_disallowed_goal(
+    event: dict[str, Any],
+    incident: dict[str, Any],
+    reversed_match: bool,
+) -> dict[str, Any]:
+    player = _sofascore_player(incident)
+    return {
+        "id": _sofascore_incident_id(incident, "disallowed-goal"),
+        "source": "sofascore",
+        "disallowedGoal": True,
+        "shootout": False,
+        "team": _sofascore_incident_team(event, incident, reversed_match),
+        "clock": _sofascore_incident_clock(incident),
+        "type": {"id": "goalNotAwarded", "type": "varDecision", "text": "Goal disallowed"},
+        "athletesInvolved": [player] if player else [],
+        "text": "Goal disallowed after VAR review",
+    }
+
+
 def _normalize_sofascore_red_card(
     event: dict[str, Any],
     incident: dict[str, Any],
@@ -584,6 +611,51 @@ def _normalize_sofascore_red_card(
         "type": {"id": detail or "red", "type": "card", "text": text},
         "text": text,
     }
+
+
+def _normalize_sofascore_penalty(
+    event: dict[str, Any],
+    incident: dict[str, Any],
+    reversed_match: bool,
+) -> dict[str, Any]:
+    text = _sofascore_penalty_text(incident)
+    player = _sofascore_player(incident)
+    return {
+        "id": _sofascore_incident_id(incident, "penalty"),
+        "source": "sofascore",
+        "shootout": False,
+        "team": _sofascore_incident_team(event, incident, reversed_match),
+        "clock": _sofascore_incident_clock(incident),
+        "type": {"id": "penalty", "type": "penalty", "text": "Penalty"},
+        "athletesInvolved": [player] if player else [],
+        "text": text,
+    }
+
+
+def _is_sofascore_penalty(incident_type: str, incident: dict[str, Any]) -> bool:
+    normalized_type = re.sub(r"[^a-z]", "", incident_type.lower())
+    detail = _sofascore_incident_detail(incident)
+    if normalized_type == "ingamepenalty":
+        return True
+    return normalized_type == "vardecision" and detail in {"penaltyawarded", "penaltygiven"}
+
+
+def _is_sofascore_disallowed_goal(incident_type: str, incident: dict[str, Any]) -> bool:
+    normalized_type = re.sub(r"[^a-z]", "", incident_type.lower())
+    return normalized_type == "vardecision" and _sofascore_incident_detail(incident) in {
+        "goalnotawarded",
+        "goaldisallowed",
+    }
+
+
+def _sofascore_penalty_text(incident: dict[str, Any]) -> str:
+    reason = _incident_value(incident, "reason", "description")
+    if reason:
+        return str(reason)
+    detail = _sofascore_incident_detail(incident)
+    if detail == "penaltyawarded":
+        return "Penalty awarded after VAR review"
+    return "Penalty awarded"
 
 
 def _is_sofascore_red_card(incident: dict[str, Any]) -> bool:

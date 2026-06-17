@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from worldcupquente.live_monitor import (
+    DISALLOWED_GOAL_NOTIFICATION,
     KICKOFF_NOTIFICATION,
     PENDING_FULL_TIME_STANDINGS_KEY,
     STANDINGS_SNAPSHOTS_KEY,
@@ -122,6 +123,87 @@ def test_collect_live_notifications_uses_sofascore_goal_without_score_change():
     assert state.score_snapshots["match-1"] == (1, 0)
 
 
+def test_collect_live_notifications_uses_sofascore_disallowed_goal():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (1, 0)},
+        is_bootstrapped=True,
+    )
+    detail = _disallowed_goal_detail()
+    event = _event_with_score(score=(0, 0), details=[])
+    event["sofascoreIncidents"] = {"goals": [], "disallowedGoals": [detail], "redCards": []}
+
+    first_notifications, penalty_goal_keys = _collect_live_notifications([event], state)
+    second_notifications, _ = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in first_notifications] == [DISALLOWED_GOAL_NOTIFICATION]
+    assert first_notifications[0][2]["source"] == "sofascore"
+    assert second_notifications == []
+    assert penalty_goal_keys == set()
+    assert state.score_snapshots["match-1"] == (0, 0)
+
+
+def test_collect_live_notifications_uses_sofascore_penalty():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    detail = _penalty_detail(play_id="sofascore:penalty-1")
+    detail["source"] = "sofascore"
+    event = _event_with_score(score=(0, 0), details=[])
+    event["sofascoreIncidents"] = {"goals": [], "penalties": [detail], "redCards": []}
+
+    notifications, penalty_goal_keys = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [PENALTY_NOTIFICATION]
+    assert notifications[0][2]["source"] == "sofascore"
+    assert penalty_goal_keys == set()
+
+
+def test_collect_live_notifications_ignores_espn_var_checking_penalty_text():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    event = _event_with_score(
+        score=(0, 0),
+        details=[
+            {
+                "id": "var-1",
+                "team": {"id": "home"},
+                "clock": {"value": 60, "displayValue": "60'"},
+                "type": {"type": "var", "text": "VAR Checking"},
+                "text": "VAR Checking: France Penalty.",
+            }
+        ],
+    )
+
+    notifications, penalty_goal_keys = _collect_live_notifications([event], state)
+
+    assert notifications == []
+    assert penalty_goal_keys == set()
+
+
 def test_collect_live_notifications_deduplicates_score_change_when_sofascore_arrives_later():
     state = LiveMonitorState(
         seen_goal_ids=set(),
@@ -206,7 +288,7 @@ def test_collect_live_notifications_deduplicates_own_goal_when_team_differs_late
     assert second_notifications == []
 
 
-def test_collect_live_notifications_deduplicates_penalty_text_updates():
+def test_collect_live_notifications_deduplicates_sofascore_penalty_updates():
     state = LiveMonitorState(
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
@@ -218,24 +300,14 @@ def test_collect_live_notifications_deduplicates_penalty_text_updates():
         score_snapshots={"match-1": (0, 0)},
         is_bootstrapped=True,
     )
-    first_event = _event_with_score(
-        score=(0, 0),
-        details=[
-            _penalty_detail(
-                play_id="penalty-1",
-                text="Penalty Switzerland. Remo Freuler draws a foul in the penalty area.",
-            )
-        ],
-    )
-    second_event = _event_with_score(
-        score=(0, 0),
-        details=[
-            _penalty_detail(
-                play_id="penalty-2",
-                text="Penalty Switzerland. Remo Freuler draws a foul in the penalty area after review.",
-            )
-        ],
-    )
+    first_detail = _penalty_detail(play_id="sofascore:penalty-1")
+    first_detail["source"] = "sofascore"
+    second_detail = _penalty_detail(play_id="sofascore:penalty-2", text="Penalty awarded after review")
+    second_detail["source"] = "sofascore"
+    first_event = _event_with_score(score=(0, 0), details=[])
+    first_event["sofascoreIncidents"] = {"goals": [], "penalties": [first_detail], "redCards": []}
+    second_event = _event_with_score(score=(0, 0), details=[])
+    second_event["sofascoreIncidents"] = {"goals": [], "penalties": [second_detail], "redCards": []}
 
     first_notifications, _ = _collect_live_notifications([first_event], state)
     second_notifications, _ = _collect_live_notifications([second_event], state)
@@ -458,6 +530,29 @@ def test_send_incident_notifications_suppresses_separate_penalty_award_when_goal
     )
 
     assert [message["chat_id"] for message in app.bot.messages] == [2]
+
+
+def test_send_incident_notifications_uses_goal_preference_for_disallowed_goal():
+    detail = _disallowed_goal_detail()
+    event = _event_with_score(score=(0, 0), details=[])
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+
+    asyncio.run(
+        _send_incident_notifications(
+            app,
+            [(DISALLOWED_GOAL_NOTIFICATION, event, detail)],
+            set(),
+            preferences,
+            service,
+        )
+    )
+
+    assert preferences.enabled_notification_types == [GOAL_NOTIFICATION]
+    assert [message["chat_id"] for message in app.bot.messages] == [1, 2]
+    assert "GOL ANULADO!" in app.bot.messages[0]["text"]
+    assert "Player Two" in app.bot.messages[0]["text"]
 
 
 def test_status_notifications_use_period_end_format_in_portuguese():
@@ -720,6 +815,19 @@ def _penalty_detail(
     }
 
 
+def _disallowed_goal_detail() -> dict[str, Any]:
+    return {
+        "id": "sofascore:var-1",
+        "source": "sofascore",
+        "disallowedGoal": True,
+        "team": {"id": "away"},
+        "clock": {"value": 8, "displayValue": "8'"},
+        "type": {"id": "goalNotAwarded", "type": "varDecision", "text": "Goal disallowed"},
+        "athletesInvolved": [{"id": "player-2", "displayName": "Player Two"}],
+        "text": "Goal disallowed after VAR review",
+    }
+
+
 def _status_event(
     state: str,
     short_detail: str | None = None,
@@ -932,6 +1040,7 @@ class _FakePreferences:
     def __init__(self, goal_enabled: dict[int, bool], language: str = "en"):
         self.goal_enabled = goal_enabled
         self.language = language
+        self.enabled_notification_types: list[str] = []
 
     def enabled_chat_ids(
         self,
@@ -940,6 +1049,7 @@ class _FakePreferences:
         team_ids: set[str] | None = None,
     ) -> list[int]:
         assert _notification_type != PRE_GAME_NOTIFICATION or team_ids is not None
+        self.enabled_notification_types.append(_notification_type)
         return list(static_chat_ids)
 
     def get(self, chat_id: int) -> dict[str, bool]:

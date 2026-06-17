@@ -247,6 +247,36 @@ def format_goal_notification(
     return "\n".join(lines)
 
 
+def format_disallowed_goal_notification(
+    event: dict[str, Any],
+    detail: dict[str, Any],
+    language: str = "en",
+) -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    athletes = detail.get("athletesInvolved") or [
+        participant.get("athlete") or {}
+        for participant in detail.get("participants", [])
+        if participant.get("athlete")
+    ]
+    athlete = (athletes or [{}])[0]
+    scorer = athlete.get("displayName") or athlete.get("fullName") or text("scorer_unavailable", language)
+    minute = (detail.get("clock") or {}).get("displayValue") or text("minute_unavailable", language)
+
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    status = competition.get("status") or event.get("status") or {}
+    state = (status.get("type") or {}).get("state", "in")
+
+    lines = [
+        f"❌ <b>{text('disallowed_goal_header', language)}</b>",
+        f"👤 {escape(str(scorer))} ({escape(str(minute))})",
+        "",
+        _format_matchup(home, away, str(state), language),
+    ]
+    return "\n".join(lines)
+
+
 def _format_goal_matchup(
     home: dict[str, Any] | None,
     away: dict[str, Any] | None,

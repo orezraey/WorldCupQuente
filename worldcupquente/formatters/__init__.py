@@ -14,6 +14,7 @@ from worldcupquente.formatters.games import (
     format_today_games,
 )
 from worldcupquente.formatters.notifications import (
+    format_disallowed_goal_notification,
     format_full_time_notification_rich,
     format_goal_notification,
     format_kickoff_notification,
@@ -41,6 +42,7 @@ __all__ = [
     "format_team_roster",
     "format_match_status_notification",
     "format_full_time_notification_rich",
+    "format_disallowed_goal_notification",
     "format_goal_notification",
     "format_kickoff_notification",
     "format_penalty_notification",

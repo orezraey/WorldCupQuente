@@ -29,10 +29,8 @@ def scoring_plays_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def penalty_plays_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
-    plays: list[dict[str, Any]] = []
-    plays.extend(_penalty_plays_from_details(event))
-    plays.extend(_penalty_plays_from_commentary(event))
-    return _dedupe_penalty_plays(plays)
+    sofascore_penalties = _sofascore_incident_group(event, "penalties")
+    return _dedupe_penalty_plays(sofascore_penalties)
 
 
 def red_cards_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
