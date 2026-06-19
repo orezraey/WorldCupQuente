@@ -7,6 +7,7 @@ from typing import Any
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import TimedOut
 from telegram.ext import ContextTypes
 
 from worldcupquente.formatters import (
@@ -35,7 +36,7 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     language = _get_chat_language(update, context)
     service = _get_service(context)
     try:
-        scoreboard = await service.get_today_games()
+        scoreboard = await service.get_sofascore_today_games()
         message_text = format_today_games(scoreboard, service.bot_timezone, language)
     except Exception:
         logger.exception("Failed to fetch today's games")
@@ -52,7 +53,7 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     language = _get_chat_language(update, context)
     service = _get_service(context)
     try:
-        events = await service.get_live_events(use_cache=False)
+        events = await service.get_sofascore_live_events(use_cache=False)
         message_text = format_live_games(events, service.bot_timezone, language=language)
     except Exception:
         logger.exception("Failed to fetch live games")
@@ -76,7 +77,7 @@ async def _send_live_games(
     service = _get_service(context)
     language = _get_query_language(query, context)
     try:
-        events = await service.get_live_events(use_cache=False)
+        events = await service.get_sofascore_live_events(use_cache=True, include_statistics=show_stats)
     except Exception:
         logger.exception("Failed to fetch live games")
         await query.edit_message_text(text("live_error_short", language))
@@ -85,27 +86,7 @@ async def _send_live_games(
     if show_stats and events and query.message is not None:
         if show_ratings:
             events = await service.enrich_events_sofascore_player_ratings(events)
-        await context.bot.edit_message_text(
-            text="\u200b",
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id,
-            reply_markup=build_live_stats_keyboard(
-                show_stats=True,
-                show_ratings=show_ratings,
-                language=language,
-            ),
-            api_kwargs={
-                "rich_message": {
-                    "html": format_live_games_rich(
-                        events,
-                        service.bot_timezone,
-                        language,
-                        show_ratings=show_ratings,
-                    ),
-                    "skip_entity_detection": True,
-                },
-            },
-        )
+        await _edit_live_rich_message(query, context, events, show_ratings, language, service.bot_timezone)
         return
 
     message_text = format_live_games(events, service.bot_timezone, language=language)
@@ -131,3 +112,44 @@ async def handle_live_callback(query: Any, context: ContextTypes.DEFAULT_TYPE) -
             show_stats=True,
             show_ratings=query.data.endswith(":show"),
         )
+
+
+async def _edit_live_rich_message(
+    query: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    events: list[dict[str, Any]],
+    show_ratings: bool,
+    language: str,
+    timezone: Any,
+) -> None:
+    if query.message is None:
+        return
+
+    payload = {
+        "text": "\u200b",
+        "chat_id": query.message.chat_id,
+        "message_id": query.message.message_id,
+        "reply_markup": build_live_stats_keyboard(
+            show_stats=True,
+            show_ratings=show_ratings,
+            language=language,
+        ),
+        "api_kwargs": {
+            "rich_message": {
+                "html": format_live_games_rich(
+                    events,
+                    timezone,
+                    language,
+                    show_ratings=show_ratings,
+                ),
+                "skip_entity_detection": True,
+            },
+        },
+        "read_timeout": 30,
+        "write_timeout": 30,
+    }
+    try:
+        await context.bot.edit_message_text(**payload)
+    except TimedOut:
+        logger.warning("Timed out sending rich live stats; retrying once")
+        await context.bot.edit_message_text(**payload)

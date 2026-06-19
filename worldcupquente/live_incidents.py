@@ -85,10 +85,9 @@ def _collect_live_notifications(
                 notifications.append((DISALLOWED_GOAL_NOTIFICATION, event, detail))
 
         for detail in penalty_plays_from_event(event):
-            penalty_id = _live_event_id(PENALTY_NOTIFICATION, event, detail)
-            if penalty_id in seen_penalty_ids:
+            if _penalty_already_seen(seen_penalty_ids, event, detail):
                 continue
-            seen_penalty_ids.add(penalty_id)
+            _remember_penalty(seen_penalty_ids, event, detail)
             if is_bootstrapped:
                 notifications.append((PENALTY_NOTIFICATION, event, detail))
 
@@ -230,14 +229,101 @@ def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[s
 
 
 def _penalty_event_id(event: dict[str, Any], detail: dict[str, Any]) -> str:
-    clock = detail.get("clock") or {}
-    return ":".join(
-        [
-            PENALTY_NOTIFICATION,
-            str(event.get("id", "")),
-            str(clock.get("displayValue") or clock.get("value") or detail.get("id") or ""),
-        ]
+    event_id, team_id, minute_key, player_key, _minute_value = _penalty_tracking_values(
+        event,
+        detail,
     )
+    return ":".join([PENALTY_NOTIFICATION, event_id, team_id, minute_key, player_key])
+
+
+def _penalty_already_seen(
+    seen_penalty_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> bool:
+    penalty_id = _penalty_event_id(event, detail)
+    if penalty_id in seen_penalty_ids:
+        return True
+
+    event_id, team_id, minute_key, player_key, minute_value = _penalty_tracking_values(
+        event,
+        detail,
+    )
+    for seen_id in seen_penalty_ids:
+        seen_values = _parse_penalty_event_id(seen_id)
+        if seen_values is None:
+            continue
+        seen_event_id, seen_team_id, seen_minute_key, seen_player_key = seen_values
+        if seen_event_id != event_id or seen_team_id != team_id:
+            continue
+        if player_key and seen_player_key and player_key == seen_player_key:
+            seen_minute_value = _numeric_minute(seen_minute_key)
+            if (
+                minute_value is not None
+                and seen_minute_value is not None
+                and abs(minute_value - seen_minute_value) <= 1
+            ):
+                return True
+        elif minute_key and minute_key == seen_minute_key:
+            return True
+    return False
+
+
+def _remember_penalty(
+    seen_penalty_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> None:
+    seen_penalty_ids.add(_penalty_event_id(event, detail))
+
+
+def _penalty_tracking_values(
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> tuple[str, str, str, str, float | None]:
+    clock = detail.get("clock") or {}
+    minute_key = str(clock.get("displayValue") or clock.get("value") or detail.get("id") or "")
+    athletes = detail.get("athletesInvolved") or [
+        participant.get("athlete") or {}
+        for participant in detail.get("participants", [])
+        if participant.get("athlete")
+    ]
+    athlete = (athletes or [{}])[0]
+    player_key = str(athlete.get("id") or athlete.get("displayName") or athlete.get("fullName") or "")
+    return (
+        str(event.get("id", "")),
+        str((detail.get("team") or {}).get("id", "")),
+        minute_key,
+        player_key,
+        _numeric_minute(clock.get("value") or clock.get("displayValue")),
+    )
+
+
+def _parse_penalty_event_id(penalty_id: str) -> tuple[str, str, str, str] | None:
+    parts = penalty_id.split(":", 4)
+    if len(parts) != 5 or parts[0] != PENALTY_NOTIFICATION:
+        return None
+    return parts[1], parts[2], parts[3], parts[4]
+
+
+def _numeric_minute(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        digits = ""
+        for character in str(value):
+            if character.isdigit() or character == ".":
+                digits += character
+                continue
+            break
+        if not digits:
+            return None
+        try:
+            return float(digits)
+        except ValueError:
+            return None
 
 
 def _is_penalty_detail(detail: dict[str, Any]) -> bool:

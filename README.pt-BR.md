@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-WorldCupQuente é um bot para Telegram que acompanha jogos da Copa do Mundo FIFA 2026 usando endpoints públicos da ESPN. Ele exibe agenda, partidas ao vivo, classificação, seleções, elencos e notificações automáticas de eventos relevantes da partida.
+WorldCupQuente é um bot para Telegram que acompanha jogos da Copa do Mundo FIFA 2026 usando endpoints públicos do SofaScore. Ele exibe agenda, partidas ao vivo, classificação, seleções, elencos e notificações automáticas de eventos relevantes da partida.
 
 ## Funcionalidades
 
@@ -21,11 +21,12 @@ WorldCupQuente é um bot para Telegram que acompanha jogos da Copa do Mundo FIFA
 - `/hoje` - lista os jogos do dia.
 - `/aovivo` - mostra partidas ao vivo no momento.
 - `/calendario` - abre o calendário por datas ou seleções.
+- `/historico` - mostra o histórico de partidas finalizadas.
 - `/tabela` - mostra a classificação da fase de grupos.
 - `/selecoes` - lista seleções e permite abrir o elenco geral.
 - `/config` - configura notificações e idioma no chat atual.
 
-Os aliases em inglês também estão disponíveis: `/today`, `/live`, `/calendar`, `/standings` e `/teams`.
+Os aliases em inglês também estão disponíveis: `/today`, `/live`, `/calendar`, `/history`, `/standings` e `/teams`.
 
 ## Requisitos
 
@@ -60,8 +61,8 @@ BOT_TIME_ZONE=America/Sao_Paulo
 LIVE_NOTIFICATION_CHAT_IDS=123456789,-1001234567890
 LIVE_POLL_INTERVAL_SECONDS=30
 NOTIFICATION_CONFIG_PATH=notification_config.json
-ESPN_TIMEOUT=30
-ESPN_USER_AGENT=WorldCupQuente/0.1
+REQUEST_TIMEOUT=30
+HTTP_USER_AGENT=WorldCupQuente/0.1
 LOG_LEVEL=INFO
 ```
 
@@ -72,8 +73,8 @@ LOG_LEVEL=INFO
 | `LIVE_NOTIFICATION_CHAT_IDS` | Não | Lista de chats que recebem notificações automáticas, separados por vírgula. |
 | `LIVE_POLL_INTERVAL_SECONDS` | Não | Intervalo de consulta do monitor ao vivo. O valor mínimo aplicado é 10 segundos. |
 | `NOTIFICATION_CONFIG_PATH` | Não | Caminho do arquivo local onde preferências por chat são salvas. |
-| `ESPN_TIMEOUT` | Não | Timeout, em segundos, para requisições à ESPN. |
-| `ESPN_USER_AGENT` | Não | User-Agent usado nas requisições HTTP. |
+| `REQUEST_TIMEOUT` | Não | Timeout, em segundos, para requisições HTTP. |
+| `HTTP_USER_AGENT` | Não | User-Agent usado nas requisições HTTP. |
 | `LOG_LEVEL` | Não | Nível de log da aplicação, como `INFO`, `WARNING` ou `DEBUG`. |
 
 Não versione arquivos `.env` nem `notification_config.json`. Eles podem conter tokens, IDs de chats e preferências locais de usuários. O `.gitignore` do projeto já ignora esses arquivos.
@@ -126,7 +127,7 @@ python -m ruff check .
 
 ## Fonte Dos Dados
 
-Os dados são obtidos a partir de endpoints públicos da ESPN. Esses endpoints não são uma API oficial versionada para este projeto e podem mudar sem aviso. Em caso de mudanças na estrutura das respostas, parsers e formatadores podem precisar de ajustes.
+Os dados são obtidos a partir de endpoints públicos do SofaScore. Esses endpoints não são uma API oficial versionada para este projeto e podem mudar sem aviso. Em caso de mudanças na estrutura das respostas, parsers e formatadores podem precisar de ajustes.
 
 ## Licença
 

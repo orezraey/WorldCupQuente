@@ -48,7 +48,7 @@ async def _send_history_page(
 ) -> None:
     service = _get_service(context)
     try:
-        events = await service.get_finished_events()
+        events = await service.get_sofascore_finished_events()
     except Exception:
         logger.exception("Failed to fetch history games")
         await send_message(text("history_error", language))
@@ -76,7 +76,7 @@ async def _edit_history_page(query: Any, context: ContextTypes.DEFAULT_TYPE, pag
     service = _get_service(context)
     language = _get_query_language(query, context)
     try:
-        events = await service.get_finished_events()
+        events = await service.get_sofascore_finished_events()
     except Exception:
         logger.exception("Failed to fetch history games")
         await query.edit_message_text(text("history_error", language))
@@ -149,7 +149,7 @@ async def _history_event_details(
     query: Any,
 ) -> dict[str, Any] | None:
     try:
-        event = await service.get_finished_event_details(event_id)
+        event = await service.get_sofascore_finished_event_details(event_id)
     except Exception:
         logger.exception("Failed to fetch history game details", extra={"event_id": event_id})
         event = None

@@ -19,8 +19,8 @@ type ChatId = int | str
 class Settings:
     telegram_bot_token: str
     bot_time_zone: str = "America/Sao_Paulo"
-    espn_timeout: float = 30.0
-    espn_user_agent: str = "WorldCupQuente/0.1"
+    request_timeout: float = 30.0
+    http_user_agent: str = "WorldCupQuente/0.1"
     log_level: str = "INFO"
     live_notification_chat_ids: tuple[ChatId, ...] = ()
     live_poll_interval_seconds: int = 30
@@ -38,8 +38,8 @@ def get_settings() -> Settings:
     return Settings(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         bot_time_zone=os.getenv("BOT_TIME_ZONE", "America/Sao_Paulo"),
-        espn_timeout=_env_float("ESPN_TIMEOUT", 30.0),
-        espn_user_agent=os.getenv("ESPN_USER_AGENT", "WorldCupQuente/0.1"),
+        request_timeout=_env_float("REQUEST_TIMEOUT", 30.0),
+        http_user_agent=os.getenv("HTTP_USER_AGENT", "WorldCupQuente/0.1"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         live_notification_chat_ids=_parse_chat_ids(os.getenv("LIVE_NOTIFICATION_CHAT_IDS", "")),
         live_poll_interval_seconds=max(10, _env_int("LIVE_POLL_INTERVAL_SECONDS", 30)),

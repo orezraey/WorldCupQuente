@@ -243,7 +243,7 @@ async def _send_pending_player_ratings(
             continue
 
         try:
-            event = await service.get_finished_event_details(event_id)
+            event = await service.get_sofascore_finished_event_details(event_id)
         except Exception:
             logger.warning("Failed to fetch pending player ratings", extra={"event_id": event_id})
             continue

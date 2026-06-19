@@ -91,6 +91,41 @@ def test_get_match_statistics_returns_statistics_list():
     assert client.paths == ["/event/1/statistics"]
 
 
+def test_get_tournament_events_returns_events_and_pagination_flag():
+    client = _FakeSofaScoreClient(
+        {"/unique-tournament/16/season/58210/events/last/0": {"events": [{"id": 1}], "hasNextPage": True}}
+    )
+
+    assert asyncio.run(client.get_tournament_events(16, 58210, "last")) == {
+        "events": [{"id": 1}],
+        "hasNextPage": True,
+    }
+    assert client.paths == ["/unique-tournament/16/season/58210/events/last/0"]
+
+
+def test_get_tournament_standings_returns_standings_list():
+    client = _FakeSofaScoreClient(
+        {"/unique-tournament/16/season/58210/standings/total": {"standings": [{"id": 1}]}}
+    )
+
+    assert asyncio.run(client.get_tournament_standings(16, 58210)) == [{"id": 1}]
+    assert client.paths == ["/unique-tournament/16/season/58210/standings/total"]
+
+
+def test_get_scheduled_events_returns_events_list():
+    client = _FakeSofaScoreClient({"/sport/football/scheduled-events/2026-06-17": {"events": [{"id": 1}]}})
+
+    assert asyncio.run(client.get_scheduled_events("2026-06-17")) == [{"id": 1}]
+    assert client.paths == ["/sport/football/scheduled-events/2026-06-17"]
+
+
+def test_get_event_returns_inner_event_payload():
+    client = _FakeSofaScoreClient({"/event/1": {"event": {"id": 1}}})
+
+    assert asyncio.run(client.get_event(1)) == {"id": 1}
+    assert client.paths == ["/event/1"]
+
+
 class _FakeSofaScoreClient(SofaScoreClient):
     def __init__(self, responses: dict[str, dict[str, Any] | Exception]) -> None:
         super().__init__(timeout=1, user_agent="test")

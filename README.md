@@ -2,7 +2,7 @@
 
 [Português](README.pt-BR.md)
 
-WorldCupQuente is a Telegram bot for following FIFA World Cup 2026 matches using public ESPN endpoints. It shows schedules, live matches, standings, teams, rosters, and automatic notifications for relevant match events.
+WorldCupQuente is a Telegram bot for following FIFA World Cup 2026 matches using public SofaScore endpoints. It shows schedules, live matches, standings, teams, rosters, and automatic notifications for relevant match events.
 
 ## Features
 
@@ -21,11 +21,12 @@ WorldCupQuente is a Telegram bot for following FIFA World Cup 2026 matches using
 - `/today` - lists today's matches.
 - `/live` - shows currently live matches.
 - `/calendar` - opens the calendar by date or team.
+- `/history` - shows finished match history.
 - `/standings` - shows group-stage standings.
 - `/teams` - lists teams and opens full rosters.
 - `/config` - configures notifications and language for the current chat.
 
-Portuguese aliases also remain available: `/hoje`, `/aovivo`, `/calendario`, `/tabela`, and `/selecoes`.
+Portuguese aliases also remain available: `/hoje`, `/aovivo`, `/calendario`, `/historico`, `/tabela`, and `/selecoes`.
 
 ## Requirements
 
@@ -60,8 +61,8 @@ BOT_TIME_ZONE=America/Sao_Paulo
 LIVE_NOTIFICATION_CHAT_IDS=123456789,-1001234567890
 LIVE_POLL_INTERVAL_SECONDS=30
 NOTIFICATION_CONFIG_PATH=notification_config.json
-ESPN_TIMEOUT=30
-ESPN_USER_AGENT=WorldCupQuente/0.1
+REQUEST_TIMEOUT=30
+HTTP_USER_AGENT=WorldCupQuente/0.1
 LOG_LEVEL=INFO
 ```
 
@@ -72,8 +73,8 @@ LOG_LEVEL=INFO
 | `LIVE_NOTIFICATION_CHAT_IDS` | No | Comma-separated list of chats that receive automatic notifications. |
 | `LIVE_POLL_INTERVAL_SECONDS` | No | Polling interval for the live monitor. The minimum applied value is 10 seconds. |
 | `NOTIFICATION_CONFIG_PATH` | No | Local file path where per-chat preferences are saved. |
-| `ESPN_TIMEOUT` | No | Timeout, in seconds, for ESPN requests. |
-| `ESPN_USER_AGENT` | No | User-Agent used for HTTP requests. |
+| `REQUEST_TIMEOUT` | No | Timeout, in seconds, for HTTP requests. |
+| `HTTP_USER_AGENT` | No | User-Agent used for HTTP requests. |
 | `LOG_LEVEL` | No | Application log level, such as `INFO`, `WARNING`, or `DEBUG`. |
 
 Do not commit `.env` or `notification_config.json`. They may contain tokens, chat IDs, and local user preferences. The project `.gitignore` already ignores these files.
@@ -126,7 +127,7 @@ python -m ruff check .
 
 ## Data Source
 
-Data is fetched from public ESPN endpoints. These endpoints are not an official versioned API for this project and may change without notice. If response structures change, parsers and formatters may need updates.
+Data is fetched from public SofaScore endpoints. These endpoints are not an official versioned API for this project and may change without notice. If response structures change, parsers and formatters may need updates.
 
 ## License
 

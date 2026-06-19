@@ -19,7 +19,7 @@ def _is_halftime_event(event: dict[str, Any]) -> bool:
     status_type = status.get("type") or {}
     if status_type.get("state") != "in":
         return False
-    return any(part == "HT" or "HALFTIME" in part.upper() for part in _status_text_parts(status))
+    return any(_is_halftime_status_part(part) for part in _status_text_parts(status))
 
 
 def _is_kickoff_event(event: dict[str, Any]) -> bool:
@@ -54,6 +54,12 @@ def _is_extra_time_or_penalties_status(status: dict[str, Any]) -> bool:
         if "PENALT" in normalized or "PENS" in normalized or "SHOOTOUT" in normalized:
             return True
     return False
+
+
+def _is_halftime_status_part(part: str) -> bool:
+    normalized = part.upper().replace("-", " ").replace("_", " ")
+    normalized = " ".join(normalized.split())
+    return normalized in {"HT", "HALFTIME", "HALF TIME"}
 
 
 def _is_pre_game_event(event: dict[str, Any]) -> bool:

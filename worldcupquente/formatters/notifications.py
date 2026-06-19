@@ -6,8 +6,8 @@ from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.event_incidents import is_own_goal_play, scoring_plays_from_event
+from worldcupquente.event_utils import parse_event_datetime
 from worldcupquente.formatters.games import format_player_ratings_table
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import (
@@ -49,7 +49,7 @@ def format_pre_game_notification(event: dict[str, Any], tz: ZoneInfo, language: 
     competitors = competition.get("competitors", [])
     home = _find_competitor(competitors, "home")
     away = _find_competitor(competitors, "away")
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     venue = competition.get("venue", {}) or event.get("venue", {})
     venue_name = venue.get("fullName") or venue.get("displayName")
 
@@ -74,7 +74,7 @@ def format_kickoff_notification(event: dict[str, Any], tz: ZoneInfo, language: s
     competitors = competition.get("competitors", [])
     home = _find_competitor(competitors, "home")
     away = _find_competitor(competitors, "away")
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     venue = competition.get("venue", {}) or event.get("venue", {})
     venue_name = venue.get("fullName") or venue.get("displayName")
 
@@ -132,7 +132,7 @@ def _format_period_end_lines(
     competitors = competition.get("competitors", [])
     home = _find_competitor(competitors, "home")
     away = _find_competitor(competitors, "away")
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     venue = competition.get("venue", {}) or event.get("venue", {})
     venue_name = venue.get("fullName") or venue.get("displayName")
 

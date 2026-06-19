@@ -8,12 +8,12 @@ from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from worldcupquente.espn_events import parse_espn_datetime
 from worldcupquente.event_incidents import (
     is_own_goal_play,
     red_cards_from_event,
     scoring_plays_from_event,
 )
+from worldcupquente.event_utils import parse_event_datetime
 from worldcupquente.formatters.utils import (
     LIVE_STAT_LABEL_EMOJIS,
     LIVE_STAT_LABELS,
@@ -204,7 +204,7 @@ def format_history_game_details(event: dict[str, Any], tz: ZoneInfo, language: s
     competitors = competition.get("competitors", [])
     home = _find_competitor(competitors, "home")
     away = _find_competitor(competitors, "away")
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     venue = competition.get("venue", {}) or event.get("venue", {})
     venue_name = venue.get("fullName") or venue.get("displayName")
 
@@ -301,14 +301,11 @@ def format_player_ratings_table(
 def _format_event(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> list[str]:
     competition = (event.get("competitions") or [{}])[0]
     status = competition.get("status") or event.get("status") or {}
-    status_type = status.get("type", {})
+    status_type = status.get("type") or {}
     state = status_type.get("state", "pre")
-    status_text = _translated_status(
-        status_type.get("shortDetail") or status_type.get("detail") or text("status_unavailable", language),
-        language,
-    )
+    status_text = _event_status_display_text(status, state, language)
 
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     now = datetime.now(tz)
     if event_time:
         if event_time.date() == now.date():
@@ -338,9 +335,36 @@ def _format_event(event: dict[str, Any], tz: ZoneInfo, language: str = "en") -> 
         if time_until_str:
             lines.append(f"⏳ {text('starts_in', language)}: {time_until_str}")
 
-    if status_text != _translated_status("Scheduled", language):
+    if status_text:
         lines.append(f"{text('status', language)}: {escape(str(status_text))}")
     return lines
+
+
+def _event_status_display_text(status: dict[str, Any], state: str, language: str = "en") -> str | None:
+    status_type = status.get("type") or {}
+    display_clock = str(status.get("displayClock") or "").strip()
+    status_source = str(
+        status_type.get("shortDetail")
+        or status_type.get("detail")
+        or status_type.get("description")
+        or display_clock
+        or text("status_unavailable", language)
+    ).strip()
+
+    if state == "pre" and _is_hidden_pre_game_status(status_source):
+        return None
+    if state == "in" and _is_match_minute(display_clock):
+        return display_clock
+    return _translated_status(status_source, language)
+
+
+def _is_hidden_pre_game_status(status: str) -> bool:
+    normalized = re.sub(r"[^a-z]", "", status.lower())
+    return normalized in {"scheduled", "notstarted"}
+
+
+def _is_match_minute(value: str) -> bool:
+    return re.fullmatch(r"\d{1,3}'(?:\+\d{1,2}')?", value.strip()) is not None
 
 
 def _format_time_until(event_time: datetime, now: datetime, language: str = "en") -> str:
@@ -382,7 +406,7 @@ def _format_live_event(
             status_source = status_type.get("description") or status_source
         status_text = _translated_status(status_source, language)
 
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     time_text = event_time.strftime("%d/%m %H:%M") if event_time else text("time_unknown", language)
 
     competitors = competition.get("competitors", [])

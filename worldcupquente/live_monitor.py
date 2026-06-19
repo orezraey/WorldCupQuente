@@ -11,7 +11,7 @@ from typing import Any
 
 from telegram.ext import Application
 
-from worldcupquente.espn_events import event_from_summary, parse_espn_datetime
+from worldcupquente.event_utils import parse_event_datetime
 from worldcupquente.live_delivery import (
     KICKOFF_NOTIFICATION,
     _send_incident_notifications,
@@ -108,16 +108,13 @@ async def poll_live_notifications(application: Application) -> None:
         return
 
     try:
-        live_events = await service.get_live_events(use_cache=False)
+        monitor_events = await service.get_sofascore_monitor_events(use_cache=False)
     except Exception:
-        logger.exception("Failed to poll live games for notifications")
+        logger.exception("Failed to poll SofaScore games for notifications")
         return
 
-    try:
-        status_events = (await service.get_active_scoreboard(use_cache=False)).get("events", [])
-    except Exception:
-        logger.exception("Failed to poll game status for notifications")
-        status_events = []
+    live_events = monitor_events.get("live_events", [])
+    status_events = monitor_events.get("status_events", [])
 
     state = _live_monitor_state(application)
 
@@ -194,7 +191,7 @@ def _collect_pre_game_notifications(
         event_id = str(event.get("id", ""))
         if not event_id or event_id in state.seen_pre_game_ids or not _is_pre_game_event(event):
             continue
-        event_time = parse_espn_datetime(event.get("date", ""), UTC)
+        event_time = parse_event_datetime(event.get("date", ""), UTC)
         if event_time is None:
             continue
         time_until = event_time - current_time
@@ -224,19 +221,19 @@ async def _collect_status_notifications(
             seen_kickoff_ids.add(event_id)
             if is_bootstrapped and _is_kickoff_event(event):
                 status_notifications.append(
-                    (KICKOFF_NOTIFICATION, await _hydrate_notification_event(service, event))
+                    (KICKOFF_NOTIFICATION, await _hydrate_notification_event(service, event, include_post_match=False))
                 )
         if _is_halftime_event(event) and event_id not in seen_halftime_ids:
             seen_halftime_ids.add(event_id)
             if is_bootstrapped:
                 status_notifications.append(
-                    (HALFTIME_NOTIFICATION, await _hydrate_notification_event(service, event))
+                    (HALFTIME_NOTIFICATION, await _hydrate_notification_event(service, event, include_post_match=False))
                 )
         if _is_full_time_event(event) and event_id not in seen_full_time_ids:
             seen_full_time_ids.add(event_id)
             if is_bootstrapped:
                 status_notifications.append(
-                    (FULL_TIME_NOTIFICATION, await _hydrate_notification_event(service, event))
+                    (FULL_TIME_NOTIFICATION, await _hydrate_notification_event(service, event, include_post_match=True))
                 )
 
     return status_notifications
@@ -250,16 +247,17 @@ def _mark_bootstrapped(application: Application, state: LiveMonitorState) -> Non
 async def _hydrate_notification_event(
     service: WorldCupService,
     event: dict[str, Any],
+    *,
+    include_post_match: bool,
 ) -> dict[str, Any]:
     event_id = str(event.get("id", ""))
     if not event_id:
         return event
     try:
-        summary = await service.get_event_summary(event_id)
+        hydrated = await service.enrich_event_sofascore_incidents(event)
+        if include_post_match:
+            hydrated = await service.enrich_event_sofascore_post_match(hydrated)
+        return await service.enrich_event_win_probability(hydrated)
     except Exception:
         logger.warning("Failed to hydrate notification event", extra={"event_id": event_id})
         return event
-    hydrated = event_from_summary(summary, fallback_event=event)
-    hydrated = await service.enrich_event_sofascore_incidents(hydrated)
-    hydrated = await service.enrich_event_sofascore_post_match(hydrated)
-    return await service.enrich_event_win_probability(hydrated)

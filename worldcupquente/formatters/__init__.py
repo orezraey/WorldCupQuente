@@ -23,7 +23,13 @@ from worldcupquente.formatters.notifications import (
     format_pre_game_notification,
     format_red_card_notification,
 )
-from worldcupquente.formatters.rosters import format_team_roster
+from worldcupquente.formatters.rosters import (
+    format_sofascore_team_achievements,
+    format_sofascore_team_events,
+    format_sofascore_team_menu,
+    format_sofascore_team_players,
+    format_sofascore_team_statistics,
+)
 from worldcupquente.formatters.standings import format_standings_group_table
 from worldcupquente.formatters.utils import split_telegram_message
 
@@ -39,7 +45,11 @@ __all__ = [
     "format_player_ratings_table",
     "format_games",
     "format_standings_group_table",
-    "format_team_roster",
+    "format_sofascore_team_menu",
+    "format_sofascore_team_players",
+    "format_sofascore_team_events",
+    "format_sofascore_team_achievements",
+    "format_sofascore_team_statistics",
     "format_match_status_notification",
     "format_full_time_notification_rich",
     "format_disallowed_goal_notification",

@@ -6,12 +6,12 @@ from worldcupquente.config import get_settings
 
 
 def test_get_settings_uses_defaults_for_invalid_numeric_values(monkeypatch):
-    monkeypatch.setenv("ESPN_TIMEOUT", "invalid")
+    monkeypatch.setenv("REQUEST_TIMEOUT", "invalid")
     monkeypatch.setenv("LIVE_POLL_INTERVAL_SECONDS", "invalid")
 
     settings = get_settings()
 
-    assert settings.espn_timeout == 30.0
+    assert settings.request_timeout == 30.0
     assert settings.live_poll_interval_seconds == 30
 
 

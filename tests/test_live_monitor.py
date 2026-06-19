@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import worldcupquente.live_monitor as live_monitor
 from worldcupquente.live_monitor import (
     DISALLOWED_GOAL_NOTIFICATION,
     KICKOFF_NOTIFICATION,
@@ -23,6 +24,7 @@ from worldcupquente.live_monitor import (
     _send_pending_full_time_standings,
     _send_pending_player_ratings,
     _send_status_notifications,
+    poll_live_notifications,
 )
 from worldcupquente.notification_preferences import (
     FULL_TIME_NOTIFICATION,
@@ -31,6 +33,20 @@ from worldcupquente.notification_preferences import (
     PENALTY_NOTIFICATION,
     PRE_GAME_NOTIFICATION,
 )
+
+
+def test_poll_live_notifications_uses_sofascore_monitor_events(monkeypatch):
+    app = _FakeApplication()
+    service = _FakeService(monitor_events={"live_events": [], "status_events": []})
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    app.bot_data["world_cup_service"] = service
+    app.bot_data[live_monitor.NOTIFICATION_PREFERENCES_KEY] = preferences
+    monkeypatch.setattr(live_monitor, "WorldCupService", _FakeService)
+    monkeypatch.setattr(live_monitor, "NotificationPreferences", _FakePreferences)
+
+    asyncio.run(poll_live_notifications(app))
+
+    assert service.monitor_event_calls == [False]
 
 
 def test_collect_live_notifications_bootstrap_records_without_sending():
@@ -173,7 +189,7 @@ def test_collect_live_notifications_uses_sofascore_penalty():
     assert penalty_goal_keys == set()
 
 
-def test_collect_live_notifications_ignores_espn_var_checking_penalty_text():
+def test_collect_live_notifications_ignores_var_checking_penalty_text():
     state = LiveMonitorState(
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
@@ -317,6 +333,55 @@ def test_collect_live_notifications_deduplicates_sofascore_penalty_updates():
     assert len(state.seen_penalty_ids) == 1
 
 
+def test_collect_live_notifications_deduplicates_penalty_result_minute_correction():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    cancelled_penalty = _penalty_detail(
+        play_id="sofascore:penalty-1",
+        team_id="home",
+        clock_value=8,
+        clock_display="8'",
+    )
+    cancelled_penalty["athletesInvolved"] = []
+    awarded_penalty = _penalty_detail(
+        play_id="sofascore:penalty-2",
+        team_id="home",
+        clock_value=10,
+        clock_display="10'",
+    )
+    saved_penalty = _penalty_detail(
+        play_id="sofascore:penalty-3",
+        text="goalkeeperSave",
+        team_id="home",
+        clock_value=9,
+        clock_display="9'",
+    )
+    first_event = _event_with_score(score=(0, 0), details=[])
+    first_event["sofascoreIncidents"] = {"goals": [], "penalties": [cancelled_penalty], "redCards": []}
+    second_event = _event_with_score(score=(0, 0), details=[])
+    second_event["sofascoreIncidents"] = {"goals": [], "penalties": [awarded_penalty], "redCards": []}
+    third_event = _event_with_score(score=(1, 0), details=[])
+    third_event["sofascoreIncidents"] = {"goals": [], "penalties": [saved_penalty], "redCards": []}
+
+    first_notifications, _ = _collect_live_notifications([first_event], state)
+    second_notifications, _ = _collect_live_notifications([second_event], state)
+    state.score_snapshots["match-1"] = (1, 0)
+    third_notifications, _ = _collect_live_notifications([third_event], state)
+
+    assert [notification[0] for notification in first_notifications] == [PENALTY_NOTIFICATION]
+    assert [notification[0] for notification in second_notifications] == [PENALTY_NOTIFICATION]
+    assert third_notifications == []
+
+
 def test_collect_status_notifications_bootstrap_records_without_sending():
     state = LiveMonitorState(
         seen_goal_ids=set(),
@@ -338,6 +403,7 @@ def test_collect_status_notifications_bootstrap_records_without_sending():
 
 
 def test_collect_status_notifications_hydrates_full_time_event():
+    service = _FakeService()
     state = LiveMonitorState(
         seen_goal_ids=set(),
         seen_penalty_ids=set(),
@@ -352,11 +418,11 @@ def test_collect_status_notifications_hydrates_full_time_event():
     event = _status_event("post", completed=True)
 
 
-    notifications = asyncio.run(_collect_status_notifications([event], state, _FakeService()))
+    notifications = asyncio.run(_collect_status_notifications([event], state, service))
 
     assert len(notifications) == 1
     assert notifications[0][0] == FULL_TIME_NOTIFICATION
-    assert notifications[0][1]["boxscore"] == {"teams": []}
+    assert notifications[0][1]["post_match_enriched"] is True
     assert state.seen_full_time_ids == {"match-1"}
 
 
@@ -1000,9 +1066,16 @@ class _FakeService:
         self,
         groups: list[dict[str, Any]] | None = None,
         finished_event: dict[str, Any] | None = None,
+        monitor_events: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self.groups = groups or []
         self.finished_event = finished_event
+        self.monitor_events = monitor_events or {"live_events": [], "status_events": []}
+        self.monitor_event_calls: list[bool] = []
+
+    async def get_sofascore_monitor_events(self, use_cache: bool = True) -> dict[str, list[dict[str, Any]]]:
+        self.monitor_event_calls.append(use_cache)
+        return self.monitor_events
 
     async def enrich_event_win_probability(self, event: dict[str, Any]) -> dict[str, Any]:
         return event
@@ -1011,27 +1084,14 @@ class _FakeService:
         return event
 
     async def enrich_event_sofascore_post_match(self, event: dict[str, Any]) -> dict[str, Any]:
+        event["post_match_enriched"] = True
         return event
 
-    async def get_event_summary(self, event_id: str) -> dict[str, Any]:
-        return {
-            "header": {
-                "id": event_id,
-                "competitions": [
-                    {
-                        "date": "2026-06-12T15:30:00Z",
-                        "status": {"type": {"state": "post", "completed": True}},
-                    }
-                ],
-            },
-            "boxscore": {"teams": []},
-        }
-
-    async def get_standings_groups(self, use_cache: bool = True) -> list[dict[str, Any]]:
+    async def get_sofascore_standings_groups(self, use_cache: bool = True) -> list[dict[str, Any]]:
         del use_cache
         return self.groups
 
-    async def get_finished_event_details(self, event_id: str) -> dict[str, Any] | None:
+    async def get_sofascore_finished_event_details(self, event_id: str) -> dict[str, Any] | None:
         del event_id
         return self.finished_event
 
@@ -1041,6 +1101,9 @@ class _FakePreferences:
         self.goal_enabled = goal_enabled
         self.language = language
         self.enabled_notification_types: list[str] = []
+
+    def has_recipients(self, _static_chat_ids: tuple[int, ...]) -> bool:
+        return True
 
     def enabled_chat_ids(
         self,

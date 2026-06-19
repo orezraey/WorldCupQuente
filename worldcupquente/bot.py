@@ -38,7 +38,22 @@ async def post_init(application: Application) -> None:
     except Exception:
         logger.exception("Failed to set Telegram commands")
 
+    await _migrate_followed_team_ids(application)
     await start_live_monitor(application)
+
+
+async def _migrate_followed_team_ids(application: Application) -> None:
+    service = application.bot_data.get("world_cup_service")
+    preferences = application.bot_data.get(NOTIFICATION_PREFERENCES_KEY)
+    if not isinstance(service, WorldCupService) or not isinstance(preferences, NotificationPreferences):
+        return
+    try:
+        mapping = await service.get_sofascore_team_id_mapping()
+        migrated = preferences.migrate_followed_team_ids(mapping)
+        if migrated:
+            logger.info("Migrated %d followed team IDs to SofaScore", migrated)
+    except Exception:
+        logger.exception("Failed to migrate followed team IDs to SofaScore")
 
 
 def build_application() -> Application:

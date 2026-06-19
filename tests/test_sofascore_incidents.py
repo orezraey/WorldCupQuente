@@ -171,15 +171,15 @@ def test_normalize_sofascore_var_goal_not_awarded_as_disallowed_goal():
     assert disallowed_goal["athletesInvolved"][0]["displayName"] == "Player Four"
 
 
-def test_sofascore_incidents_are_preferred_over_espn_heuristics():
+def test_sofascore_incidents_are_preferred_over_existing_heuristics():
     event = _event()
     event["competitions"][0]["details"] = [
         {
-            "id": "espn-goal",
+            "id": "existing-goal",
             "scoringPlay": True,
             "team": {"id": "home"},
             "clock": {"displayValue": "10'"},
-            "athletesInvolved": [{"id": "espn-player", "displayName": "ESPN Player"}],
+            "athletesInvolved": [{"id": "existing-player", "displayName": "Existing Player"}],
         }
     ]
     event["sofascoreIncidents"] = {

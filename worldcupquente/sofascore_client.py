@@ -62,6 +62,107 @@ class SofaScoreClient:
         except RuntimeError:
             return []
 
+    async def get_world_cup_teams(self, unique_tournament_id: int | str, season_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(f"/unique-tournament/{unique_tournament_id}/season/{season_id}/teams")
+        except RuntimeError:
+            return []
+        teams = data.get("teams", [])
+        return teams if isinstance(teams, list) else []
+
+    async def get_tournament_standings(self, unique_tournament_id: int | str, season_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(f"/unique-tournament/{unique_tournament_id}/season/{season_id}/standings/total")
+        except RuntimeError:
+            return []
+        standings = data.get("standings", [])
+        return standings if isinstance(standings, list) else []
+
+    async def get_tournament_events(
+        self,
+        unique_tournament_id: int | str,
+        season_id: int | str,
+        direction: str,
+        page: int = 0,
+        suppress_errors: bool = True,
+    ) -> dict[str, Any]:
+        if direction not in {"last", "next"}:
+            return {"events": [], "hasNextPage": False}
+        try:
+            data = await self.get_json(
+                f"/unique-tournament/{unique_tournament_id}/season/{season_id}/events/{direction}/{page}"
+            )
+        except RuntimeError:
+            if not suppress_errors:
+                raise
+            return {"events": [], "hasNextPage": False}
+        events = data.get("events", [])
+        return {
+            "events": events if isinstance(events, list) else [],
+            "hasNextPage": data.get("hasNextPage") is True,
+        }
+
+    async def get_event(self, event_id: int | str, suppress_errors: bool = True) -> dict[str, Any]:
+        try:
+            data = await self.get_json(f"/event/{event_id}")
+        except RuntimeError:
+            if not suppress_errors:
+                raise
+            return {}
+        event = data.get("event", data)
+        return event if isinstance(event, dict) else {}
+
+    async def get_team_profile(self, team_id: int | str) -> dict[str, Any]:
+        try:
+            return await self.get_json(f"/team/{team_id}")
+        except RuntimeError:
+            return {}
+
+    async def get_team_players(self, team_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(f"/team/{team_id}/players")
+        except RuntimeError:
+            return []
+        players = data.get("players", [])
+        return players if isinstance(players, list) else []
+
+    async def get_team_events(self, team_id: int | str, direction: str, page: int = 0) -> list[dict[str, Any]]:
+        if direction not in {"last", "next"}:
+            return []
+        try:
+            data = await self.get_json(f"/team/{team_id}/events/{direction}/{page}")
+        except RuntimeError:
+            return []
+        events = data.get("events", [])
+        return events if isinstance(events, list) else []
+
+    async def get_team_achievements(self, team_id: int | str) -> dict[str, Any]:
+        try:
+            return await self.get_json(f"/team/{team_id}/achievements")
+        except RuntimeError:
+            return {}
+
+    async def get_team_statistics_seasons(self, team_id: int | str) -> dict[str, Any]:
+        try:
+            return await self.get_json(f"/team/{team_id}/team-statistics/seasons")
+        except RuntimeError:
+            return {}
+
+    async def get_team_statistics(
+        self,
+        team_id: int | str,
+        unique_tournament_id: int | str,
+        season_id: int | str,
+        statistics_type: str = "overall",
+    ) -> dict[str, Any]:
+        try:
+            return await self.get_json(
+                f"/team/{team_id}/unique-tournament/{unique_tournament_id}/season/{season_id}/statistics/{statistics_type}",
+                quiet_statuses=(404,),
+            )
+        except RuntimeError:
+            return {}
+
     async def get_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
         try:
             data = await self.get_json(f"/event/{event_id}/incidents")
@@ -100,7 +201,7 @@ class SofaScoreClient:
 
     async def get_odds_win_probability(self, event_id: int | str) -> dict[str, int] | None:
         try:
-            data = await self.get_json(f"/event/{event_id}/odds/1/all")
+            data = await self.get_json(f"/event/{event_id}/odds/1/all", quiet_statuses=(404,))
         except RuntimeError:
             return None
         return normalize_odds_win_probability(data)

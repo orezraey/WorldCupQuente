@@ -9,6 +9,34 @@ from zoneinfo import ZoneInfo
 from worldcupquente.handlers import live
 
 
+def test_today_command_uses_sofascore_today_games(monkeypatch):
+    service = _FakeService()
+    context = _FakeContext(service)
+    update = _FakeUpdate()
+    monkeypatch.setattr(live, "_get_service", lambda _context: service)
+    monkeypatch.setattr(live, "_get_chat_language", lambda _update, _context: "pt")
+    monkeypatch.setattr(live, "_log_command", lambda _update, _context, _command: None)
+
+    asyncio.run(live.today_command(update, context))
+
+    assert service.today_calls == 1
+    assert update.effective_message.replies
+
+
+def test_live_command_uses_sofascore_live_events(monkeypatch):
+    service = _FakeService()
+    context = _FakeContext(service)
+    update = _FakeUpdate()
+    monkeypatch.setattr(live, "_get_service", lambda _context: service)
+    monkeypatch.setattr(live, "_get_chat_language", lambda _update, _context: "pt")
+    monkeypatch.setattr(live, "_log_command", lambda _update, _context, _command: None)
+
+    asyncio.run(live.live_command(update, context))
+
+    assert service.live_calls == 1
+    assert update.effective_message.replies
+
+
 def test_live_stats_callback_does_not_enrich_sofascore_ratings(monkeypatch):
     query = _FakeQuery("live:stats:show")
     service = _FakeService()
@@ -18,6 +46,7 @@ def test_live_stats_callback_does_not_enrich_sofascore_ratings(monkeypatch):
     asyncio.run(live._send_live_games(query, context, show_stats=True))
 
     assert service.ratings_enriched is False
+    assert service.last_include_statistics is True
     rich_message = context.bot.edited_messages[0]["api_kwargs"]["rich_message"]
     assert "Notas SofaScore" not in rich_message["html"]
 
@@ -53,9 +82,22 @@ class _FakeService:
 
     def __init__(self) -> None:
         self.ratings_enriched = False
+        self.today_calls = 0
+        self.live_calls = 0
+        self.last_include_statistics: bool | None = None
 
-    async def get_live_events(self, use_cache: bool = True) -> list[dict[str, Any]]:
+    async def get_sofascore_today_games(self) -> dict[str, Any]:
+        self.today_calls += 1
+        return {"events": [_live_event()]}
+
+    async def get_sofascore_live_events(
+        self,
+        use_cache: bool = True,
+        include_statistics: bool = False,
+    ) -> list[dict[str, Any]]:
         del use_cache
+        self.live_calls += 1
+        self.last_include_statistics = include_statistics
         return [_live_event()]
 
     async def enrich_events_sofascore_player_ratings(
@@ -114,8 +156,16 @@ class _FakeMessage:
     chat_id = 1
     message_id = 10
 
-    async def reply_text(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
+    def __init__(self) -> None:
+        self.replies: list[dict[str, Any]] = []
+
+    async def reply_text(self, *args: Any, **kwargs: Any) -> None:
+        self.replies.append({"args": args, "kwargs": kwargs})
+
+
+class _FakeUpdate:
+    def __init__(self) -> None:
+        self.effective_message = _FakeMessage()
 
 
 class _FakeBot:

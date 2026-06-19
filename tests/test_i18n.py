@@ -8,10 +8,11 @@ from tempfile import TemporaryDirectory
 from zoneinfo import ZoneInfo
 
 from worldcupquente.commands import build_bot_commands
-from worldcupquente.formatters import format_today_games
+from worldcupquente.formatters import format_games, format_today_games
 from worldcupquente.keyboards import (
     build_back_to_teams_keyboard,
     build_notification_config_keyboard,
+    build_sofascore_teams_keyboard,
 )
 from worldcupquente.notification_preferences import (
     LANGUAGE_KEY,
@@ -20,7 +21,7 @@ from worldcupquente.notification_preferences import (
     TEAM_SCOPE_FOLLOWED,
     NotificationPreferences,
 )
-from worldcupquente.team_translations import translated_team_name
+from worldcupquente.team_translations import translated_sofascore_team_name, translated_team_name
 
 
 def test_notification_preferences_default_and_persisted_language():
@@ -127,6 +128,60 @@ def test_team_scope_filters_enabled_chat_ids_by_followed_teams():
         assert preferences.enabled_chat_ids(PRE_GAME_NOTIFICATION, (), {"arg"}) == [123]
 
 
+def test_migrate_followed_team_ids_replaces_legacy_ids_with_sofascore():
+    with TemporaryDirectory(dir=Path(__file__).parent) as temp_dir:
+        path = Path(temp_dir) / "notification_config.json"
+        preferences = NotificationPreferences(path)
+        preferences.set_team_scope(123, TEAM_SCOPE_FOLLOWED)
+        preferences.toggle_followed_team(123, "205")
+        preferences.toggle_followed_team(123, "482")
+
+        migrated = preferences.migrate_followed_team_ids({"205": "4748", "482": "4704"})
+
+        assert migrated == 2
+        assert preferences.followed_team_ids(123) == ["4704", "4748"]
+
+
+def test_migrate_followed_team_ids_preserves_already_sofascore_ids():
+    with TemporaryDirectory(dir=Path(__file__).parent) as temp_dir:
+        path = Path(temp_dir) / "notification_config.json"
+        preferences = NotificationPreferences(path)
+        preferences.set_team_scope(123, TEAM_SCOPE_FOLLOWED)
+        preferences.toggle_followed_team(123, "4748")
+
+        migrated = preferences.migrate_followed_team_ids({"205": "4748"})
+
+        assert migrated == 0
+        assert preferences.followed_team_ids(123) == ["4748"]
+
+
+def test_migrate_followed_team_ids_skips_when_already_migrated():
+    with TemporaryDirectory(dir=Path(__file__).parent) as temp_dir:
+        path = Path(temp_dir) / "notification_config.json"
+        preferences = NotificationPreferences(path)
+        preferences.set_team_scope(123, TEAM_SCOPE_FOLLOWED)
+        preferences.toggle_followed_team(123, "205")
+
+        preferences.migrate_followed_team_ids({"205": "4748"})
+        migrated_again = preferences.migrate_followed_team_ids({"205": "4748"})
+
+        assert migrated_again == 0
+        assert preferences.followed_team_ids(123) == ["4748"]
+
+
+def test_migrated_followed_team_ids_persist_to_disk():
+    with TemporaryDirectory(dir=Path(__file__).parent) as temp_dir:
+        path = Path(temp_dir) / "notification_config.json"
+        preferences = NotificationPreferences(path)
+        preferences.set_team_scope(123, TEAM_SCOPE_FOLLOWED)
+        preferences.toggle_followed_team(123, "205")
+
+        preferences.migrate_followed_team_ids({"205": "4748"})
+
+        reloaded = NotificationPreferences(path)
+        assert reloaded.followed_team_ids(123) == ["4748"]
+
+
 def test_team_notifications_button_only_when_requested():
     keyboard = build_back_to_teams_keyboard(
         language="pt",
@@ -152,6 +207,20 @@ def test_team_names_are_localized():
     assert translated_team_name(team, include_emoji=False, language="pt") == "Alemanha"
 
 
+def test_sofascore_team_names_are_localized():
+    brazil = {"id": 4748, "name": "Brazil", "country": {"alpha2": "BR"}}
+    canada = {"id": 4722, "name": "Canada", "country": {"alpha2": "CA"}}
+
+    assert translated_sofascore_team_name(brazil, include_emoji=False, language="pt") == "Brasil"
+    assert translated_sofascore_team_name(canada, include_emoji=False, language="pt") == "Canadá"
+
+    keyboard = build_sofascore_teams_keyboard([brazil, canada], language="pt")
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert "🇧🇷 Brasil" in labels
+    assert "🇨🇦 Canadá" in labels
+
+
 def test_today_games_defaults_to_english_and_supports_portuguese():
     scoreboard = {"events": []}
 
@@ -160,6 +229,33 @@ def test_today_games_defaults_to_english_and_supports_portuguese():
         format_today_games(scoreboard, ZoneInfo("UTC"), "pt")
         == "Nenhum jogo da Copa do Mundo encontrado para hoje."
     )
+
+
+def test_format_games_hides_not_started_status():
+    event = _formatted_game_event(state="pre", short_detail="Not started")
+
+    output = format_games([event], ZoneInfo("UTC"), "Calendário", language="pt")
+
+    assert "Status:" not in output
+    assert "Not started" not in output
+
+
+def test_format_games_prefers_live_match_minute_status():
+    event = _formatted_game_event(state="in", short_detail="2nd half", display_clock="69'")
+
+    output = format_games([event], ZoneInfo("UTC"), "Ao vivo", language="pt")
+
+    assert "Status: 69&#x27;" in output
+    assert "2nd half" not in output
+
+
+def test_format_games_translates_live_period_status_without_minute():
+    event = _formatted_game_event(state="in", short_detail="2nd half", display_clock="")
+
+    output = format_games([event], ZoneInfo("UTC"), "Ao vivo", language="pt")
+
+    assert "Status: Segundo tempo" in output
+    assert "2nd half" not in output
 
 
 def test_live_games_formatting_includes_blank_line_before_goals():
@@ -351,6 +447,40 @@ def test_win_probability_is_omitted_when_odds_are_null():
     output = format_live_games([event], ZoneInfo("UTC"))
 
     assert "Win Probability" not in output
+
+
+def _formatted_game_event(
+    *,
+    state: str,
+    short_detail: str,
+    display_clock: str = "",
+) -> dict[str, object]:
+    status = {
+        "type": {"state": state, "shortDetail": short_detail, "detail": short_detail},
+        "displayClock": display_clock,
+    }
+    return {
+        "date": "2026-06-17T17:00:00Z",
+        "status": status,
+        "competitions": [
+            {
+                "status": status,
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "4748", "displayName": "Brazil", "abbreviation": "BRA"},
+                        "score": "1" if state == "in" else "-",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "4704", "displayName": "Portugal", "abbreviation": "POR"},
+                        "score": "0" if state == "in" else "-",
+                    },
+                ],
+                "venue": {"fullName": "NRG Stadium"},
+            }
+        ],
+    }
 
 
 def _win_probability_event(state: str = "in", top_level_odds: bool = False) -> dict[str, object]:

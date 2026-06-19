@@ -40,7 +40,7 @@ async def _send_standings_menu(
 ) -> None:
     service = _get_service(context)
     try:
-        groups = await service.get_standings_groups()
+        groups = await service.get_sofascore_standings_groups()
     except Exception:
         logger.exception("Failed to fetch standings groups")
         await send_message(text("standings_groups_error", language))
@@ -73,7 +73,7 @@ async def _send_standings_group(query: Any, context: ContextTypes.DEFAULT_TYPE, 
     group_id = parts[2]
     service = _get_service(context)
     try:
-        group = await service.get_standings_group(group_id)
+        group = await service.get_sofascore_standings_group(group_id)
     except Exception:
         logger.exception("Failed to fetch standings group", extra={"group_id": group_id})
         await query.edit_message_text(

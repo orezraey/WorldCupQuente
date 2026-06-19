@@ -37,12 +37,15 @@ TEAM_SCOPE_ALL = "all"
 TEAM_SCOPE_FOLLOWED = "followed"
 TEAM_SCOPES = (TEAM_SCOPE_ALL, TEAM_SCOPE_FOLLOWED)
 LEGACY_DEFAULT_LANGUAGE = "pt"
+TEAM_ID_VERSION_KEY = "team_id_version"
+CURRENT_TEAM_ID_VERSION = 2
 
 
 class NotificationPreferences:
     def __init__(self, path: Path):
         self.path = path
         self._items: dict[str, dict[str, Any]] = {}
+        self._team_id_version: int = 1
         self._load()
 
     def ensure_chat(self, chat_id: ChatId) -> dict[str, Any]:
@@ -108,6 +111,31 @@ class NotificationPreferences:
         self.save()
         return current
 
+    def migrate_followed_team_ids(self, mapping: dict[str, str]) -> int:
+        if self._team_id_version >= CURRENT_TEAM_ID_VERSION:
+            return 0
+        migrated = 0
+        for settings in self._items.values():
+            followed = settings.get(FOLLOWED_TEAM_IDS_KEY)
+            if not isinstance(followed, list):
+                continue
+            new_ids: list[str] = []
+            changed = False
+            for team_id in followed:
+                sofascore_id = mapping.get(str(team_id))
+                if sofascore_id and sofascore_id != str(team_id):
+                    new_ids.append(sofascore_id)
+                    migrated += 1
+                    changed = True
+                else:
+                    new_ids.append(str(team_id))
+            if changed:
+                settings[FOLLOWED_TEAM_IDS_KEY] = sorted(set(new_ids))
+        self._team_id_version = CURRENT_TEAM_ID_VERSION
+        if migrated:
+            self.save()
+        return migrated
+
     def enabled_chat_ids(
         self,
         notification_type: str,
@@ -142,7 +170,7 @@ class NotificationPreferences:
     def save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {"chats": self._items}
+            payload = {"chats": self._items, TEAM_ID_VERSION_KEY: self._team_id_version}
             self.path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         except OSError:
             logger.exception("Failed to save notification preferences", extra={"path": str(self.path)})
@@ -156,6 +184,8 @@ class NotificationPreferences:
             logger.exception("Failed to load notification preferences", extra={"path": str(self.path)})
             return
 
+        if isinstance(payload, dict):
+            self._team_id_version = int(payload.get(TEAM_ID_VERSION_KEY, 1))
         chats = payload.get("chats", {}) if isinstance(payload, dict) else {}
         if not isinstance(chats, dict):
             return

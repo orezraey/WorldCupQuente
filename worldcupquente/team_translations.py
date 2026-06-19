@@ -66,15 +66,30 @@ TEAM_TRANSLATIONS: dict[str, dict[str, Any]] = {
     "2570": {"names": {"en": "Uzbekistan", "pt": "Uzbequistão"}, "emoji": "🇺🇿"},
 }
 
+SOFASCORE_TEAM_NAME_ALIASES = {
+    "Bosnia & Herzegovina": "Bosnia and Herzegovina",
+    "Cabo Verde": "Cape Verde",
+    "Curaçao": "Curacao",
+    "Côte d'Ivoire": "Ivory Coast",
+    "Türkiye": "Turkiye",
+    "USA": "United States",
+}
+
+TEAM_TRANSLATIONS_BY_ENGLISH_NAME = {
+    str(translation.get("names", {}).get("en", "")).casefold(): translation
+    for translation in TEAM_TRANSLATIONS.values()
+    if translation.get("names", {}).get("en")
+}
+
 
 def translated_team_name(
     team: dict[str, Any],
     include_emoji: bool = True,
     language: str = "en",
 ) -> str:
-    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {})
+    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {}) or _sofascore_translation(team)
     name = _translated_name(team, translation, language)
-    emoji = translation.get("emoji") if include_emoji else ""
+    emoji = (translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2"))) if include_emoji else ""
     return f"{emoji} {name}" if emoji else name
 
 
@@ -83,18 +98,59 @@ def translated_team_name_html(
     include_emoji: bool = True,
     language: str = "en",
 ) -> str:
-    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {})
+    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {}) or _sofascore_translation(team)
     name = escape(_translated_name(team, translation, language))
     if not include_emoji:
         return name
 
-    emoji = translation.get("emoji", "")
+    emoji = translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2"))
     custom_emoji_id = translation.get("custom_emoji_id")
     if custom_emoji_id and emoji:
         return f'<tg-emoji emoji-id="{escape(custom_emoji_id)}">{escape(emoji)}</tg-emoji> {name}'
     if emoji:
         return f"{escape(emoji)} {name}"
     return name
+
+
+def translated_sofascore_team_name(
+    team: dict[str, Any],
+    include_emoji: bool = True,
+    language: str = "en",
+) -> str:
+    translation = _sofascore_translation(team)
+    name = _translated_sofascore_name(team, translation, language)
+    emoji = translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2")) if include_emoji else ""
+    return f"{emoji} {name}" if emoji else name
+
+
+def translated_sofascore_team_name_html(
+    team: dict[str, Any],
+    include_emoji: bool = True,
+    language: str = "en",
+) -> str:
+    translation = _sofascore_translation(team)
+    name = escape(_translated_sofascore_name(team, translation, language))
+    if not include_emoji:
+        return name
+
+    emoji = translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2"))
+    custom_emoji_id = translation.get("custom_emoji_id")
+    if custom_emoji_id and emoji:
+        return f'<tg-emoji emoji-id="{escape(custom_emoji_id)}">{escape(emoji)}</tg-emoji> {name}'
+    if emoji:
+        return f"{escape(emoji)} {name}"
+    return name
+
+
+def sofascore_legacy_team_id(team: dict[str, Any]) -> str | None:
+    translation = _sofascore_translation(team)
+    english_name = (translation.get("names") or {}).get("en") if translation else None
+    if not english_name:
+        return None
+    for team_id, candidate in TEAM_TRANSLATIONS.items():
+        if (candidate.get("names") or {}).get("en") == english_name:
+            return team_id
+    return None
 
 
 def _translated_name(team: dict[str, Any], translation: dict[str, Any], language: str) -> str:
@@ -107,3 +163,32 @@ def _translated_name(team: dict[str, Any], translation: dict[str, Any], language
         or team.get("name")
         or text("team", language)
     )
+
+
+def _sofascore_translation(team: dict[str, Any]) -> dict[str, Any]:
+    for value in (team.get("name"), team.get("shortName"), team.get("displayName")):
+        if not value:
+            continue
+        name = SOFASCORE_TEAM_NAME_ALIASES.get(str(value), str(value))
+        translation = TEAM_TRANSLATIONS_BY_ENGLISH_NAME.get(name.casefold())
+        if translation:
+            return translation
+    return {}
+
+
+def _translated_sofascore_name(team: dict[str, Any], translation: dict[str, Any], language: str) -> str:
+    names = translation.get("names") or {}
+    translated_name = names.get(normalize_language(language)) if isinstance(names, dict) else None
+    return str(
+        translated_name
+        or team.get("shortName")
+        or team.get("displayName")
+        or team.get("name")
+        or text("team", language)
+    )
+
+
+def _country_flag(alpha2: Any) -> str:
+    if not isinstance(alpha2, str) or len(alpha2) != 2 or not alpha2.isalpha():
+        return ""
+    return "".join(chr(0x1F1E6 + ord(char) - ord("A")) for char in alpha2.upper())

@@ -1,21 +1,21 @@
-"""Unit tests for ESPN data parsers and incident extraction utilities."""
+"""Unit tests for event parsers and incident extraction utilities."""
 
 from __future__ import annotations
 
 from zoneinfo import ZoneInfo
 
-from worldcupquente.espn_events import event_from_summary, parse_espn_datetime
 from worldcupquente.event_incidents import (
     penalty_plays_from_event,
     red_cards_from_event,
     scoring_plays_from_event,
 )
+from worldcupquente.event_utils import parse_event_datetime
 
 
-def test_parse_espn_datetime_valid():
+def test_parse_event_datetime_valid():
     tz = ZoneInfo("America/Sao_Paulo")
     # UTC time
-    dt = parse_espn_datetime("2026-06-12T15:30:00Z", tz)
+    dt = parse_event_datetime("2026-06-12T15:30:00Z", tz)
     assert dt is not None
     assert dt.year == 2026
     assert dt.month == 6
@@ -26,100 +26,10 @@ def test_parse_espn_datetime_valid():
     assert dt.tzinfo == tz
 
 
-def test_parse_espn_datetime_invalid():
+def test_parse_event_datetime_invalid():
     tz = ZoneInfo("UTC")
-    assert parse_espn_datetime("", tz) is None
-    assert parse_espn_datetime("invalid-date", tz) is None
-
-
-def test_event_from_summary_merges_data():
-    summary = {
-        "header": {
-            "id": "12345",
-            "uid": "s:1~l:1~e:12345",
-            "competitions": [
-                {
-                    "date": "2026-06-12T15:30:00Z",
-                    "status": {
-                        "type": {
-                            "state": "in",
-                            "detail": "85'",
-                        }
-                    }
-                }
-            ]
-        },
-        "gameInfo": {
-            "venue": {
-                "id": "1",
-                "fullName": "Azteca"
-            }
-        },
-        "boxscore": {"teams": []},
-        "leaders": [{"team": {}}],
-        "commentary": [{"text": "Kick off"}],
-        "rosters": [{"team": {}}],
-        "scoringPlays": [{"id": "play1"}],
-        "odds": [{"details": "Draw +200"}],
-    }
-
-    fallback = {
-        "id": "12345",
-        "status": {
-            "type": {
-                "name": "STATUS_IN_PROGRESS",
-                "state": "pre"  # Should be overridden by "in"
-            }
-        }
-    }
-
-    event = event_from_summary(summary, fallback_event=fallback)
-
-    assert event["id"] == "12345"
-    assert event["uid"] == "s:1~l:1~e:12345"
-    assert event["date"] == "2026-06-12T15:30:00Z"
-    assert event["venue"]["fullName"] == "Azteca"
-    assert event["boxscore"] == {"teams": []}
-    assert len(event["leaders"]) == 1
-    assert len(event["commentary"]) == 1
-    assert len(event["rosters"]) == 1
-    assert len(event["scoringPlays"]) == 1
-    assert event["odds"] == [{"details": "Draw +200"}]
-
-    # Check status merging
-    status = event["status"]
-    assert status["type"]["state"] == "in"
-    assert status["type"]["name"] == "STATUS_IN_PROGRESS"
-    assert status["type"]["detail"] == "85'"
-
-
-def test_event_from_summary_preserves_fallback_competition_odds():
-    summary = {
-        "header": {
-            "id": "12345",
-            "competitions": [{"date": "2026-06-12T15:30:00Z"}],
-        }
-    }
-    fallback = {
-        "id": "12345",
-        "competitions": [
-            {
-                "odds": [
-                    {
-                        "moneyline": {
-                            "home": {"current": {"odds": "-110"}},
-                            "draw": {"current": {"odds": "+240"}},
-                            "away": {"current": {"odds": "+350"}},
-                        }
-                    }
-                ]
-            }
-        ],
-    }
-
-    event = event_from_summary(summary, fallback_event=fallback)
-
-    assert event["odds"] == fallback["competitions"][0]["odds"]
+    assert parse_event_datetime("", tz) is None
+    assert parse_event_datetime("invalid-date", tz) is None
 
 
 def test_scoring_plays_from_event_details():
@@ -216,7 +126,7 @@ def test_scoring_plays_from_commentary_fallback():
     assert goals[0]["clock"]["displayValue"] == "30'"
 
 
-def test_penalty_plays_ignores_espn_penalty_text_without_sofascore():
+def test_penalty_plays_ignores_plain_penalty_text_without_sofascore():
     event = {
         "competitions": [
             {
@@ -236,7 +146,7 @@ def test_penalty_plays_ignores_espn_penalty_text_without_sofascore():
     assert penalty_plays_from_event(event) == []
 
 
-def test_penalty_plays_ignores_espn_var_checking_penalty_text():
+def test_penalty_plays_ignores_var_checking_penalty_text():
     event = {
         "competitions": [
             {

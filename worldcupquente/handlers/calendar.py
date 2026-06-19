@@ -10,7 +10,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from worldcupquente.espn_events import parse_espn_datetime
+from worldcupquente.event_utils import parse_event_datetime
 from worldcupquente.formatters import format_games
 from worldcupquente.handlers.utils import (
     _get_chat_language,
@@ -27,9 +27,9 @@ from worldcupquente.keyboards import (
     build_calendar_back_to_teams_keyboard,
     build_calendar_dates_keyboard,
     build_calendar_menu_keyboard,
-    build_calendar_teams_keyboard,
+    build_sofascore_calendar_teams_keyboard,
 )
-from worldcupquente.team_translations import translated_team_name
+from worldcupquente.team_translations import translated_sofascore_team_name
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def _send_calendar_menu(send_message: Any, language: str) -> None:
 async def _send_calendar_dates(send_message: Any, context: ContextTypes.DEFAULT_TYPE, language: str) -> None:
     service = _get_service(context)
     try:
-        events = await service.get_schedule_events()
+        events = await service.get_sofascore_schedule_events()
     except Exception:
         logger.exception("Failed to fetch calendar dates")
         await send_message(text("calendar_dates_error", language))
@@ -74,7 +74,7 @@ async def _send_calendar_all_games(query: Any, context: ContextTypes.DEFAULT_TYP
     language = _get_query_language(query, context)
     page = _parse_calendar_page(data)
     try:
-        events = sorted(await service.get_schedule_events(), key=lambda event: event.get("date", ""))
+        events = sorted(await service.get_sofascore_schedule_events(), key=lambda event: event.get("date", ""))
     except Exception:
         logger.exception("Failed to fetch full calendar")
         await query.edit_message_text(
@@ -114,7 +114,7 @@ async def _send_calendar_date_games(query: Any, context: ContextTypes.DEFAULT_TY
     date_param = parts[2]
     service = _get_service(context)
     try:
-        events = await service.get_schedule_events_by_date(date_param)
+        events = await service.get_sofascore_schedule_events_by_date(date_param)
     except Exception:
         logger.exception("Failed to fetch date calendar", extra={"date": date_param})
         await query.edit_message_text(
@@ -145,7 +145,7 @@ async def _send_calendar_teams_page(
 ) -> None:
     service = _get_service(context)
     try:
-        teams = await service.get_teams()
+        teams = await service.get_sofascore_world_cup_teams()
     except Exception:
         logger.exception("Failed to fetch calendar teams")
         await send_message(text("calendar_teams_error", language))
@@ -157,7 +157,7 @@ async def _send_calendar_teams_page(
     await send_message(
         message_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_calendar_teams_keyboard(teams, page=page, language=language),
+        reply_markup=build_sofascore_calendar_teams_keyboard(teams, page=page, language=language),
     )
 
 
@@ -172,9 +172,9 @@ async def _send_calendar_team_games(query: Any, context: ContextTypes.DEFAULT_TY
     page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     service = _get_service(context)
     try:
-        teams = await service.get_teams()
+        teams = await service.get_sofascore_world_cup_teams()
         team = next((item for item in teams if str(item.get("id", "")) == team_id), None)
-        events = await service.get_schedule_events_by_team(team_id)
+        events = await service.get_sofascore_schedule_events_by_team(team_id)
     except Exception:
         logger.exception("Failed to fetch team calendar", extra={"team_id": team_id})
         await query.edit_message_text(
@@ -183,7 +183,7 @@ async def _send_calendar_team_games(query: Any, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    team_name = translated_team_name(team or {"id": team_id}, language=language)
+    team_name = translated_sofascore_team_name(team or {"id": team_id}, language=language)
     message_text = format_games(
         events,
         service.bot_timezone,
@@ -208,7 +208,7 @@ def _parse_calendar_page(data: str) -> int:
 def _event_date_params(events: list[dict[str, Any]], tz: Any) -> list[str]:
     dates = []
     for event in events:
-        event_time = parse_espn_datetime(event.get("date", ""), tz)
+        event_time = parse_event_datetime(event.get("date", ""), tz)
         if event_time:
             dates.append(event_time.strftime("%Y%m%d"))
     return sorted(set(dates))

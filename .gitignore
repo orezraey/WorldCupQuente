@@ -20,3 +20,7 @@ dist/
 .coverage
 htmlcov/
 SOFASCORE_MIGRATION_NOTES.md
+brasil_sofascore.html
+messi_sofascore.html
+SOFASCORE_FULL_MIGRATION_PLAN.md
+logs/sofascore_healthcheck.jsonl

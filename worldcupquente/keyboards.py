@@ -7,7 +7,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from worldcupquente.espn_events import parse_espn_datetime
+from worldcupquente.event_utils import parse_event_datetime
 from worldcupquente.i18n import LANGUAGE_LABELS, text
 from worldcupquente.notification_preferences import (
     LANGUAGE_KEY,
@@ -16,7 +16,7 @@ from worldcupquente.notification_preferences import (
     TEAM_SCOPE_FOLLOWED,
     TEAM_SCOPE_KEY,
 )
-from worldcupquente.team_translations import translated_team_name
+from worldcupquente.team_translations import translated_sofascore_team_name, translated_team_name
 
 TEAMS_PAGE_SIZE = 12
 CALENDAR_GAMES_PAGE_SIZE = 6
@@ -78,6 +78,76 @@ def build_teams_keyboard(
     if navigation:
         rows.append(navigation)
     return InlineKeyboardMarkup(rows)
+
+
+def build_sofascore_teams_keyboard(
+    teams: list[dict[str, Any]],
+    page: int = 0,
+    page_size: int = TEAMS_PAGE_SIZE,
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    teams = sorted(teams, key=lambda team: translated_sofascore_team_name(team, include_emoji=False, language=language))
+    total_pages = max(1, (len(teams) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    page_teams = teams[start : start + page_size]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(page_teams), 2):
+        row = []
+        for team in page_teams[index : index + 2]:
+            team_id = team.get("id")
+            if team_id:
+                row.append(InlineKeyboardButton(_sofascore_team_label(team, language), callback_data=f"team:menu:{team_id}:{page}"))
+        if row:
+            rows.append(row)
+
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton(text("previous", language), callback_data=f"teams:{page - 1}"))
+    if page < total_pages - 1:
+        navigation.append(InlineKeyboardButton(text("next", language), callback_data=f"teams:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
+    return InlineKeyboardMarkup(rows)
+
+
+def build_sofascore_team_menu_keyboard(
+    team_id: str,
+    page: int = 0,
+    language: str = "en",
+    show_notifications_button: bool = False,
+    is_following: bool = False,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text("team_players", language), callback_data=f"team:players:{team_id}:{page}"),
+            InlineKeyboardButton(text("team_last_games", language), callback_data=f"team:last:{team_id}:{page}"),
+        ],
+        [
+            InlineKeyboardButton(text("team_next_games", language), callback_data=f"team:next:{team_id}:{page}"),
+            InlineKeyboardButton(text("stats", language), callback_data=f"team:stats:{team_id}:{page}"),
+        ],
+        [InlineKeyboardButton(text("team_titles", language), callback_data=f"team:titles:{team_id}:{page}")],
+    ]
+    if show_notifications_button:
+        label_key = "team_notifications_disable" if is_following else "team_notifications_enable"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text(label_key, language),
+                    callback_data=f"team:notify:{team_id}:{page}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text("back_to_teams", language), callback_data=f"teams:{page}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_sofascore_team_back_keyboard(team_id: str, page: int = 0, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text("back_to_team", language), callback_data=f"team:menu:{team_id}:{page}")]]
+    )
 
 
 def build_back_to_teams_keyboard(
@@ -275,6 +345,44 @@ def build_calendar_teams_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def build_sofascore_calendar_teams_keyboard(
+    teams: list[dict[str, Any]],
+    page: int = 0,
+    page_size: int = TEAMS_PAGE_SIZE,
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    teams = sorted(teams, key=lambda team: translated_sofascore_team_name(team, include_emoji=False, language=language))
+    total_pages = max(1, (len(teams) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    page_teams = teams[start : start + page_size]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(page_teams), 2):
+        row = []
+        for team in page_teams[index : index + 2]:
+            team_id = team.get("id")
+            if team_id:
+                row.append(
+                    InlineKeyboardButton(
+                        translated_sofascore_team_name(team, language=language),
+                        callback_data=f"cal:team:{team_id}:{page}",
+                    )
+                )
+        if row:
+            rows.append(row)
+
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton(text("previous", language), callback_data=f"cal:teams:{page - 1}"))
+    if page < total_pages - 1:
+        navigation.append(InlineKeyboardButton(text("next", language), callback_data=f"cal:teams:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
+    rows.append([InlineKeyboardButton(text("back", language), callback_data="cal:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 def build_calendar_back_to_teams_keyboard(page: int = 0, language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(text("back_to_teams", language), callback_data=f"cal:teams:{page}")]]
@@ -290,6 +398,10 @@ def _format_date_label(date_param: str, language: str = "en") -> str:
     return f"{weekdays[date.weekday()]} {date.strftime('%d/%m')}"
 
 
+def _sofascore_team_label(team: dict[str, Any], language: str = "en") -> str:
+    return translated_sofascore_team_name(team, language=language)
+
+
 def _history_event_label(event: dict[str, Any], tz: Any, language: str = "en") -> str:
     competition = (event.get("competitions") or [{}])[0]
     competitors = competition.get("competitors", [])
@@ -297,7 +409,7 @@ def _history_event_label(event: dict[str, Any], tz: Any, language: str = "en") -
     away = next((item for item in competitors if item.get("homeAway") == "away"), competitors[1] if len(competitors) > 1 else {})
     home_team = home.get("team") or {}
     away_team = away.get("team") or {}
-    event_time = parse_espn_datetime(event.get("date", ""), tz)
+    event_time = parse_event_datetime(event.get("date", ""), tz)
     date_text = event_time.strftime("%d/%m") if event_time else "--/--"
     home_name = translated_team_name(home_team, language=language) if home_team else text("home", language)
     away_name = translated_team_name(away_team, language=language) if away_team else text("away", language)

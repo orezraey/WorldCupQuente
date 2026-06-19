@@ -29,7 +29,7 @@ async def _remember_active_standings_snapshots(
     if not active_events:
         return
     try:
-        groups = await service.get_standings_groups(use_cache=False)
+        groups = await service.get_sofascore_standings_groups(use_cache=False)
     except Exception:
         logger.warning("Failed to fetch standings snapshots")
         return
@@ -68,7 +68,7 @@ async def _standings_group_for_event(
     if not team_ids:
         return None
     try:
-        groups = await service.get_standings_groups(use_cache=False)
+        groups = await service.get_sofascore_standings_groups(use_cache=False)
     except Exception:
         logger.warning("Failed to fetch standings for full-time notification")
         return None
