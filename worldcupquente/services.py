@@ -75,6 +75,7 @@ class WorldCupService:
                 continue
             normalized.append(event)
         normalized = sorted(normalized, key=_event_date_value)
+        normalized = await self._hydrate_sofascore_event_venues(normalized, use_cache=use_cache)
         if use_cache:
             self.cache.set(cache_key, normalized, SOFASCORE_EVENTS_CACHE_SECONDS)
         return normalized
@@ -256,6 +257,39 @@ class WorldCupService:
         incidents = await self.sofascore_client.get_match_incidents(event_id)
         self.cache.set(cache_key, incidents, SOFASCORE_INCIDENTS_CACHE_SECONDS)
         return incidents
+
+    async def _hydrate_sofascore_event_venues(
+        self,
+        events: list[dict[str, Any]],
+        *,
+        use_cache: bool = True,
+    ) -> list[dict[str, Any]]:
+        missing_venue_events = [event for event in events if not _event_venue_name(event) and event.get("id")]
+        if not missing_venue_events:
+            return events
+
+        details = await asyncio.gather(
+            *(self._sofascore_event_detail(str(event["id"]), use_cache=use_cache) for event in missing_venue_events),
+            return_exceptions=True,
+        )
+        for event, detail in zip(missing_venue_events, details, strict=True):
+            if isinstance(detail, Exception) or not detail:
+                continue
+            venue = _normalize_sofascore_venue(detail.get("venue") or {})
+            if venue:
+                _apply_event_venue(event, venue)
+        return events
+
+    async def _sofascore_event_detail(self, event_id: int | str, *, use_cache: bool = True) -> dict[str, Any]:
+        cache_key = f"sofascore:event:{event_id}:detail"
+        cached = self.cache.get(cache_key) if use_cache else None
+        if cached is not None:
+            return cached
+
+        detail = await self.sofascore_client.get_event(event_id)
+        if use_cache and detail:
+            self.cache.set(cache_key, detail, SOFASCORE_EVENT_DETAIL_CACHE_SECONDS)
+        return detail
 
     async def _sofascore_match_lineups(self, event_id: int | str) -> dict[str, Any]:
         cache_key = f"sofascore:lineups:{event_id}"
@@ -597,6 +631,10 @@ _SOFASCORE_LIVE_STAT_NAMES = {
     "goalkeeperSaves": "saves",
     "cornerKicks": "wonCorners",
     "fouls": "foulsCommitted",
+    "passes": "totalPasses",
+    "accuratePasses": "accuratePasses",
+    "accurateCross": "accurateCrosses",
+    "totalTackle": "totalTackles",
     "yellowCards": "yellowCards",
     "redCards": "redCards",
 }
@@ -681,6 +719,19 @@ def _normalize_sofascore_venue(venue: dict[str, Any]) -> dict[str, Any]:
     stadium = venue.get("stadium") or {}
     name = venue.get("name") or stadium.get("name")
     return {"fullName": name, "displayName": name} if name else {}
+
+
+def _event_venue_name(event: dict[str, Any]) -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    venue = competition.get("venue") or event.get("venue") or {}
+    return str(venue.get("fullName") or venue.get("displayName") or "")
+
+
+def _apply_event_venue(event: dict[str, Any], venue: dict[str, Any]) -> None:
+    event["venue"] = venue
+    competitions = event.get("competitions") or []
+    if competitions:
+        competitions[0]["venue"] = venue
 
 
 def _sofascore_event_date(timestamp: Any) -> str:
@@ -1154,6 +1205,15 @@ def _normalize_sofascore_match_statistics(
         "goalkeeperSaves",
         "cornerKicks",
         "fouls",
+        "passes",
+        "accuratePasses",
+        "accurateCross",
+        "totalTackle",
+        "finalThirdEntries",
+        "accurateLongBalls",
+        "interceptionWon",
+        "ballRecovery",
+        "totalClearance",
         "yellowCards",
         "redCards",
     }
@@ -1187,6 +1247,15 @@ def _normalize_sofascore_match_statistics(
         "goalkeeperSaves",
         "cornerKicks",
         "fouls",
+        "passes",
+        "accuratePasses",
+        "accurateCross",
+        "totalTackle",
+        "finalThirdEntries",
+        "accurateLongBalls",
+        "interceptionWon",
+        "ballRecovery",
+        "totalClearance",
         "yellowCards",
         "redCards",
     ]

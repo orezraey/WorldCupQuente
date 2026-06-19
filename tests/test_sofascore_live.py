@@ -45,6 +45,21 @@ def test_sofascore_games_by_date_filters_returned_events_by_local_date():
     assert [event["id"] for event in events] == ["2"]
 
 
+def test_sofascore_games_by_date_hydrates_missing_venue_from_event_detail():
+    service = _service()
+    fake_client = _FakeSofaScoreLiveClient(
+        scheduled_events={"2026-06-18": [_raw_event(10, timestamp=_date_timestamp("2026-06-18"))]},
+        event_details={10: {"venue": {"name": "Mercedes-Benz Stadium", "stadium": {"name": "Mercedes-Benz Stadium"}}}},
+    )
+    service.sofascore_client = fake_client  # type: ignore[assignment]
+
+    events = asyncio.run(service.get_sofascore_games_by_date("2026-06-18"))
+
+    assert fake_client.event_detail_calls == ["10"]
+    assert events[0]["venue"]["fullName"] == "Mercedes-Benz Stadium"
+    assert events[0]["competitions"][0]["venue"]["fullName"] == "Mercedes-Benz Stadium"
+
+
 def test_sofascore_live_events_filter_and_enrich_live_matches():
     service = _service()
     today = service.sofascore_date_param_for_offset()
@@ -75,6 +90,11 @@ def test_sofascore_live_events_filter_and_enrich_live_matches():
         "possessionPct": "55%",
         "totalShots": "10",
         "shotsOnTarget": "4",
+        "wonCorners": "6",
+        "totalPasses": "783",
+        "accuratePasses": "724",
+        "accurateCrosses": "6/23 (26%)",
+        "totalTackles": "12",
     }
 
 
@@ -148,6 +168,7 @@ class _FakeSofaScoreLiveClient:
         probabilities: dict[int, dict[str, int]] | None = None,
         lineups: dict[int, dict[str, Any]] | None = None,
         world_cup_teams: list[dict[str, Any]] | None = None,
+        event_details: dict[int, dict[str, Any]] | None = None,
     ) -> None:
         self.scheduled_events = scheduled_events or {}
         self.incidents = incidents or {}
@@ -155,8 +176,10 @@ class _FakeSofaScoreLiveClient:
         self.probabilities = probabilities or {}
         self.lineups = lineups or {}
         self._world_cup_teams = world_cup_teams or []
+        self.event_details = event_details or {}
         self.scheduled_calls: list[str] = []
         self.lineup_calls: list[str] = []
+        self.event_detail_calls: list[str] = []
 
     async def get_world_cup_teams(self, _tournament_id: int | str, _season_id: int | str) -> list[dict[str, Any]]:
         return self._world_cup_teams
@@ -164,6 +187,11 @@ class _FakeSofaScoreLiveClient:
     async def get_scheduled_events(self, date: str) -> list[dict[str, Any]]:
         self.scheduled_calls.append(date)
         return self.scheduled_events.get(date, [])
+
+    async def get_event(self, event_id: int | str, suppress_errors: bool = True) -> dict[str, Any]:
+        del suppress_errors
+        self.event_detail_calls.append(str(event_id))
+        return self.event_details.get(int(event_id), {})
 
     async def get_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
         return self.incidents.get(int(event_id), [])
@@ -239,6 +267,11 @@ def _statistics_response() -> list[dict[str, Any]]:
                         {"key": "ballPossession", "name": "Ball possession", "home": "55%", "away": "45%"},
                         {"key": "totalShotsOnGoal", "name": "Total shots", "home": "10", "away": "7"},
                         {"key": "shotsOnGoal", "name": "Shots on target", "home": "4", "away": "2"},
+                        {"key": "cornerKicks", "name": "Corner kicks", "home": "6", "away": "3"},
+                        {"key": "passes", "name": "Passes", "home": "783", "away": "249"},
+                        {"key": "accuratePasses", "name": "Accurate passes", "home": "724", "away": "195"},
+                        {"key": "accurateCross", "name": "Crosses", "home": "6/23 (26%)", "away": "1/10 (10%)"},
+                        {"key": "totalTackle", "name": "Total tackles", "home": "12", "away": "17"},
                     ]
                 }
             ],
