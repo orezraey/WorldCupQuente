@@ -21,7 +21,11 @@ from worldcupquente.notification_preferences import (
     TEAM_SCOPE_FOLLOWED,
     NotificationPreferences,
 )
-from worldcupquente.team_translations import translated_sofascore_team_name, translated_team_name
+from worldcupquente.team_translations import (
+    translated_sofascore_team_name,
+    translated_team_name,
+    translated_team_name_html,
+)
 
 
 def test_notification_preferences_default_and_persisted_language():
@@ -219,6 +223,60 @@ def test_sofascore_team_names_are_localized():
 
     assert "🇧🇷 Brasil" in labels
     assert "🇨🇦 Canadá" in labels
+
+
+def test_sofascore_team_translation_prefers_name_over_legacy_id_collision():
+    paraguay = {
+        "id": "4789",
+        "name": "Paraguay",
+        "displayName": "Paraguay",
+        "country": {"alpha2": "PY"},
+        "source": "sofascore",
+    }
+
+    assert translated_team_name(paraguay, language="pt") == "🇵🇾 Paraguai"
+    assert translated_team_name_html(paraguay, language="pt") == "🇵🇾 Paraguai"
+
+
+def test_format_games_uses_sofascore_team_name_for_legacy_id_collision():
+    event = {
+        "date": "2026-06-20T03:00:00Z",
+        "status": {"type": {"state": "post", "shortDetail": "FT"}, "displayClock": "FT"},
+        "competitions": [
+            {
+                "status": {"type": {"state": "post", "shortDetail": "FT"}, "displayClock": "FT"},
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {
+                            "id": "4700",
+                            "name": "Turkiye",
+                            "displayName": "Turkiye",
+                            "country": {"alpha2": "TR"},
+                            "source": "sofascore",
+                        },
+                        "score": "0",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {
+                            "id": "4789",
+                            "name": "Paraguay",
+                            "displayName": "Paraguay",
+                            "country": {"alpha2": "PY"},
+                            "source": "sofascore",
+                        },
+                        "score": "1",
+                    },
+                ],
+            }
+        ],
+    }
+
+    output = format_games([event], ZoneInfo("America/Sao_Paulo"), "Hoje", language="pt")
+
+    assert "🇹🇷 Turquia 0 x 1 🇵🇾 Paraguai" in output
+    assert "Costa do Marfim" not in output
 
 
 def test_today_games_defaults_to_english_and_supports_portuguese():

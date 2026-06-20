@@ -80,6 +80,8 @@ def _collect_live_notifications(
             disallowed_goal_id = _live_event_id(DISALLOWED_GOAL_NOTIFICATION, event, detail)
             if disallowed_goal_id in seen_goal_ids:
                 continue
+            if _disallowed_goal_matches_confirmed(detail, official_goals):
+                continue
             seen_goal_ids.add(disallowed_goal_id)
             if is_bootstrapped:
                 notifications.append((DISALLOWED_GOAL_NOTIFICATION, event, detail))
@@ -190,6 +192,26 @@ def _goal_scorer_key(detail: dict[str, Any]) -> str:
     ]
     scorer = (athletes or [{}])[0]
     return str(scorer.get("id") or scorer.get("displayName") or scorer.get("fullName") or "")
+
+
+def _disallowed_goal_matches_confirmed(
+    detail: dict[str, Any],
+    official_goals: list[dict[str, Any]],
+) -> bool:
+    team_id = str((detail.get("team") or {}).get("id", ""))
+    clock = detail.get("clock") or {}
+    minute = str(clock.get("value") or clock.get("displayValue") or "")
+    scorer = _goal_scorer_key(detail)
+    if not (team_id and minute and scorer):
+        return False
+    for goal in official_goals:
+        goal_team = str((goal.get("team") or {}).get("id", ""))
+        goal_clock = goal.get("clock") or {}
+        goal_minute = str(goal_clock.get("value") or goal_clock.get("displayValue") or "")
+        goal_scorer = _goal_scorer_key(goal)
+        if team_id == goal_team and minute == goal_minute and scorer == goal_scorer:
+            return True
+    return False
 
 
 def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[str, Any]) -> str:

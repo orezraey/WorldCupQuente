@@ -38,6 +38,8 @@ SOFASCORE_TEAM_EVENTS_CACHE_SECONDS = 60 * 5
 SOFASCORE_TEAM_ACHIEVEMENTS_CACHE_SECONDS = 60 * 60 * 24
 SOFASCORE_TEAM_STATISTICS_CACHE_SECONDS = 60 * 60
 SOFASCORE_WIN_PROBABILITY_CACHE_SECONDS = 30
+SOFASCORE_PLAYER_DETAIL_CACHE_SECONDS = 60 * 60
+SOFASCORE_PLAYER_IMAGE_CACHE_SECONDS = 60 * 60 * 24
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +302,33 @@ class WorldCupService:
         lineups = await self.sofascore_client.get_match_lineups(event_id)
         self.cache.set(cache_key, lineups, SOFASCORE_LINEUPS_CACHE_SECONDS)
         return lineups
+
+    async def get_sofascore_match_lineups(self, event_id: int | str) -> dict[str, Any]:
+        return await self._sofascore_match_lineups(event_id)
+
+    async def _sofascore_player_detail(self, player_id: int | str) -> dict[str, Any]:
+        cache_key = f"sofascore:player:{player_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        detail = await self.sofascore_client.get_player_detail(player_id)
+        self.cache.set(cache_key, detail, SOFASCORE_PLAYER_DETAIL_CACHE_SECONDS)
+        return detail
+
+    async def get_sofascore_player_detail(self, player_id: int | str) -> dict[str, Any]:
+        return await self._sofascore_player_detail(player_id)
+
+    async def get_sofascore_player_image(self, player_id: int | str) -> bytes | None:
+        cache_key = f"sofascore:player-image:{player_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        image = await self.sofascore_client.get_player_image(player_id)
+        if image:
+            self.cache.set(cache_key, image, SOFASCORE_PLAYER_IMAGE_CACHE_SECONDS)
+        return image
 
     async def _sofascore_match_statistics(self, event_id: int | str) -> list[dict[str, Any]]:
         cache_key = f"sofascore:statistics:{event_id}"

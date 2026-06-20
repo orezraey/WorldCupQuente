@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from worldcupquente import sofascore_client as sofascore_client_module
 from worldcupquente.sofascore_client import SofaScoreClient, normalize_odds_win_probability
 
 
@@ -124,6 +125,98 @@ def test_get_event_returns_inner_event_payload():
 
     assert asyncio.run(client.get_event(1)) == {"id": 1}
     assert client.paths == ["/event/1"]
+
+
+def test_get_player_detail_returns_inner_player_payload():
+    client = _FakeSofaScoreClient({"/player/9": {"player": {"id": 9, "name": "Player Nine"}}})
+
+    assert asyncio.run(client.get_player_detail(9)) == {"id": 9, "name": "Player Nine"}
+    assert client.paths == ["/player/9"]
+
+
+def test_get_player_detail_returns_empty_on_failure():
+    client = _FakeSofaScoreClient({"/player/9": RuntimeError("404")})
+
+    assert asyncio.run(client.get_player_detail(9)) == {}
+    assert client.paths == ["/player/9"]
+
+
+def test_get_player_image_returns_bytes(monkeypatch):
+    client = SofaScoreClient(timeout=1, user_agent="test")
+    monkeypatch.setattr(
+        sofascore_client_module.requests,
+        "AsyncSession",
+        _make_image_session_factory(b"image-bytes"),
+    )
+    result = asyncio.run(client.get_player_image(9))
+    assert result == b"image-bytes"
+
+
+def test_get_player_image_returns_none_on_non_image_content_type(monkeypatch):
+    client = SofaScoreClient(timeout=1, user_agent="test")
+    monkeypatch.setattr(
+        sofascore_client_module.requests,
+        "AsyncSession",
+        _make_image_session_factory(b"{}", content_type="application/json", status=403),
+    )
+    assert asyncio.run(client.get_player_image(9)) is None
+
+
+def test_get_player_image_returns_none_on_request_error(monkeypatch):
+    client = SofaScoreClient(timeout=1, user_agent="test")
+    monkeypatch.setattr(
+        sofascore_client_module.requests,
+        "AsyncSession",
+        _make_image_session_factory(b"", raise_error=True),
+    )
+    assert asyncio.run(client.get_player_image(9)) is None
+
+
+def _make_image_session_factory(
+    content: bytes,
+    *,
+    content_type: str = "image/webp",
+    status: int = 200,
+    raise_error: bool = False,
+):
+    def factory(**_kwargs: object) -> _FakeImageSession:
+        return _FakeImageSession(content, content_type=content_type, status=status, raise_error=raise_error)
+
+    return factory
+
+
+class _FakeImageSession:
+    def __init__(
+        self,
+        content: bytes = b"",
+        *,
+        content_type: str = "image/webp",
+        status: int = 200,
+        raise_error: bool = False,
+    ) -> None:
+        self._content = content
+        self._content_type = content_type
+        self._status = status
+        self._raise_error = raise_error
+
+    async def __aenter__(self) -> _FakeImageSession:
+        return self
+
+    async def __aexit__(self, *_args: object) -> bool:
+        return False
+
+    async def get(self, _url: str, headers: dict[str, str] | None = None) -> _FakeImageResponse:
+        del headers
+        if self._raise_error:
+            raise sofascore_client_module.requests.errors.RequestsError("boom")
+        return _FakeImageResponse(self._status, self._content, self._content_type)
+
+
+class _FakeImageResponse:
+    def __init__(self, status: int, content: bytes, content_type: str) -> None:
+        self.status_code = status
+        self.content = content
+        self.headers = {"content-type": content_type}
 
 
 class _FakeSofaScoreClient(SofaScoreClient):

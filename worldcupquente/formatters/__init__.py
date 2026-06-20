@@ -23,6 +23,12 @@ from worldcupquente.formatters.notifications import (
     format_pre_game_notification,
     format_red_card_notification,
 )
+from worldcupquente.formatters.players import (
+    format_match_lineups,
+    format_player_detail_caption,
+    format_player_match_statistics,
+    lineup_player_rating,
+)
 from worldcupquente.formatters.rosters import (
     format_sofascore_team_achievements,
     format_sofascore_team_events,
@@ -58,4 +64,8 @@ __all__ = [
     "format_penalty_notification",
     "format_pre_game_notification",
     "format_red_card_notification",
+    "format_match_lineups",
+    "format_player_detail_caption",
+    "format_player_match_statistics",
+    "lineup_player_rating",
 ]

@@ -206,6 +206,34 @@ class SofaScoreClient:
             return None
         return normalize_odds_win_probability(data)
 
+    async def get_player_detail(self, player_id: int | str) -> dict[str, Any]:
+        try:
+            data = await self.get_json(f"/player/{player_id}", quiet_statuses=(404,))
+        except RuntimeError:
+            return {}
+        player = data.get("player", data)
+        return player if isinstance(player, dict) else {}
+
+    async def get_player_image(self, player_id: int | str) -> bytes | None:
+        url = f"{self.base_url}/player/{player_id}/image"
+        headers = {
+            "Accept": "image/*",
+            "Referer": "https://www.sofascore.com/",
+            "User-Agent": self.user_agent,
+        }
+        try:
+            async with requests.AsyncSession(impersonate="chrome", timeout=self.timeout) as client:
+                response = await client.get(url, headers=headers)
+                if response.status_code != 200:
+                    return None
+                content_type = response.headers.get("content-type", "")
+                if not content_type.startswith("image/"):
+                    return None
+                content = bytes(response.content or b"")
+                return content or None
+        except requests.errors.RequestsError:
+            return None
+
 
 def normalize_win_probability(data: dict[str, Any]) -> dict[str, int] | None:
     values = {

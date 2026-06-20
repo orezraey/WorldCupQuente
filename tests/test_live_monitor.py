@@ -165,6 +165,65 @@ def test_collect_live_notifications_uses_sofascore_disallowed_goal():
     assert state.score_snapshots["match-1"] == (0, 0)
 
 
+def test_collect_live_notifications_suppresses_disallowed_goal_when_currently_confirmed():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    disallowed = _disallowed_goal_detail()
+    confirmed = {
+        "id": "sofascore:goal-1",
+        "source": "sofascore",
+        "scoringPlay": True,
+        "shootout": False,
+        "team": {"id": "away"},
+        "clock": {"value": 8, "displayValue": "8'"},
+        "type": {"id": "goal", "type": "goal", "text": "Goal"},
+        "scoreValue": 1,
+        "scoreAfter": {"home": 0, "away": 1},
+        "athletesInvolved": [{"id": "player-2", "displayName": "Player Two"}],
+        "text": "Goal",
+    }
+    event = _event_with_score(score=(0, 1), details=[])
+    event["sofascoreIncidents"] = {"goals": [confirmed], "redCards": []}
+
+    first_notifications, _ = _collect_live_notifications([event], state)
+
+    event["sofascoreIncidents"]["disallowedGoals"] = [disallowed]
+    second_notifications, _ = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in first_notifications] == [GOAL_NOTIFICATION]
+    assert second_notifications == []
+
+
+def test_collect_live_notifications_emits_disallowed_goal_when_no_longer_confirmed():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 1)},
+        is_bootstrapped=True,
+    )
+    disallowed = _disallowed_goal_detail()
+    event = _event_with_score(score=(0, 0), details=[])
+    event["sofascoreIncidents"] = {"goals": [], "disallowedGoals": [disallowed], "redCards": []}
+
+    notifications, _ = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [DISALLOWED_GOAL_NOTIFICATION]
+
+
 def test_collect_live_notifications_uses_sofascore_penalty():
     state = LiveMonitorState(
         seen_goal_ids=set(),

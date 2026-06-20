@@ -182,15 +182,73 @@ def build_live_stats_keyboard(
     show_stats: bool = False,
     show_ratings: bool = False,
     language: str = "en",
+    show_lineup: bool = True,
 ) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_lineup:
+        rows.append([InlineKeyboardButton(text("lineup_button", language), callback_data="live:lineup")])
     label = text("hide_stats" if show_stats else "stats", language)
     action = "hide" if show_stats else "show"
-    rows = [[InlineKeyboardButton(label, callback_data=f"live:stats:{action}")]]
+    rows.append([InlineKeyboardButton(label, callback_data=f"live:stats:{action}")])
     if show_stats:
         ratings_label = text("hide_player_ratings" if show_ratings else "player_ratings_short", language)
         ratings_action = "hide" if show_ratings else "show"
         rows.append([InlineKeyboardButton(ratings_label, callback_data=f"live:ratings:{ratings_action}")])
     return InlineKeyboardMarkup(rows)
+
+
+def build_live_lineup_picker_keyboard(
+    matches: list[tuple[str, str]],
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for event_id, label in matches:
+        if event_id:
+            rows.append([InlineKeyboardButton(label, callback_data=f"live:lineup:pick:{event_id}")])
+    rows.append([InlineKeyboardButton(text("back", language), callback_data="live:stats:hide")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_live_lineup_keyboard(
+    event_id: str,
+    lineups: dict[str, Any],
+    show_subs: bool,
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for side in ("home", "away"):
+        side_data = lineups.get(side) or {}
+        players = side_data.get("players") or []
+        starters = [player for player in players if not player.get("substitute")]
+        subs = [player for player in players if player.get("substitute")]
+        visible = starters + (subs if show_subs else [])
+        side_buttons: list[InlineKeyboardButton] = []
+        for item in visible:
+            player = item.get("player") or {}
+            player_id = player.get("id")
+            if player_id is None:
+                continue
+            shirt = item.get("shirtNumber") or player.get("shirtNumber")
+            name = player.get("shortName") or player.get("name") or "?"
+            label = f"#{shirt} {name}" if shirt not in (None, "") else str(name)
+            side_buttons.append(
+                InlineKeyboardButton(label, callback_data=f"live:pl:{event_id}:{player_id}:{side}")
+            )
+        for index in range(0, len(side_buttons), 2):
+            rows.append(side_buttons[index : index + 2])
+
+    toggle_label = text("lineup_hide_subs" if show_subs else "lineup_show_subs", language)
+    rows.append(
+        [InlineKeyboardButton(toggle_label, callback_data=f"live:lineup:view:{event_id}:{0 if show_subs else 1}")]
+    )
+    rows.append([InlineKeyboardButton(text("back", language), callback_data="live:stats:hide")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_player_detail_back_keyboard(photo_message_id: int, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text("back", language), callback_data=f"live:pl:back:{photo_message_id}")]]
+    )
 
 
 def build_history_games_keyboard(

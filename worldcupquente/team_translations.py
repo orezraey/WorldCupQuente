@@ -87,7 +87,7 @@ def translated_team_name(
     include_emoji: bool = True,
     language: str = "en",
 ) -> str:
-    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {}) or _sofascore_translation(team)
+    translation = _team_translation(team)
     name = _translated_name(team, translation, language)
     emoji = (translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2"))) if include_emoji else ""
     return f"{emoji} {name}" if emoji else name
@@ -98,7 +98,7 @@ def translated_team_name_html(
     include_emoji: bool = True,
     language: str = "en",
 ) -> str:
-    translation = TEAM_TRANSLATIONS.get(str(team.get("id", "")), {}) or _sofascore_translation(team)
+    translation = _team_translation(team)
     name = escape(_translated_name(team, translation, language))
     if not include_emoji:
         return name
@@ -163,6 +163,12 @@ def _translated_name(team: dict[str, Any], translation: dict[str, Any], language
         or team.get("name")
         or text("team", language)
     )
+
+
+def _team_translation(team: dict[str, Any]) -> dict[str, Any]:
+    if team.get("source") == "sofascore":
+        return _sofascore_translation(team)
+    return TEAM_TRANSLATIONS.get(str(team.get("id", "")), {}) or _sofascore_translation(team)
 
 
 def _sofascore_translation(team: dict[str, Any]) -> dict[str, Any]:
