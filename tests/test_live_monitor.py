@@ -224,6 +224,84 @@ def test_collect_live_notifications_emits_disallowed_goal_when_no_longer_confirm
     assert [notification[0] for notification in notifications] == [DISALLOWED_GOAL_NOTIFICATION]
 
 
+def test_collect_live_notifications_emits_disallowed_goal_on_score_regression_without_incident():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (1, 0)},
+        is_bootstrapped=True,
+    )
+    event = _event_with_score(score=(0, 0), details=[])
+    event["competitions"][0]["status"] = {"displayClock": "21'"}
+
+    notifications, penalty_goal_keys = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [DISALLOWED_GOAL_NOTIFICATION]
+    assert notifications[0][2]["source"] == "score-regression"
+    assert notifications[0][2]["team"]["id"] == "home"
+    assert penalty_goal_keys == set()
+    assert state.score_snapshots["match-1"] == (0, 0)
+
+
+def test_collect_live_notifications_emits_multiple_disallowed_goals_on_multi_goal_regression():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (2, 0)},
+        is_bootstrapped=True,
+    )
+    event = _event_with_score(score=(0, 0), details=[])
+    event["competitions"][0]["status"] = {"displayClock": "21'"}
+
+    notifications, _ = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [
+        DISALLOWED_GOAL_NOTIFICATION,
+        DISALLOWED_GOAL_NOTIFICATION,
+    ]
+    assert [notification[2]["id"] for notification in notifications] == [
+        "score-regression:home:2:0:0:0:0",
+        "score-regression:home:2:0:0:0:1",
+    ]
+
+
+def test_collect_live_notifications_deduplicates_official_disallowed_after_score_regression():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (1, 0)},
+        is_bootstrapped=True,
+    )
+    score_regression_event = _event_with_score(score=(0, 0), details=[])
+    score_regression_event["competitions"][0]["status"] = {"displayClock": "21'"}
+    official_disallowed = _disallowed_goal_detail()
+    official_disallowed["team"] = {"id": "home"}
+    official_disallowed["clock"] = {"value": 21, "displayValue": "21'"}
+    official_event = _event_with_score(score=(0, 0), details=[])
+    official_event["sofascoreIncidents"] = {"goals": [], "disallowedGoals": [official_disallowed], "redCards": []}
+
+    first_notifications, _ = _collect_live_notifications([score_regression_event], state)
+    second_notifications, _ = _collect_live_notifications([official_event], state)
+
+    assert [notification[0] for notification in first_notifications] == [DISALLOWED_GOAL_NOTIFICATION]
+    assert second_notifications == []
+
+
 def test_collect_live_notifications_uses_sofascore_penalty():
     state = LiveMonitorState(
         seen_goal_ids=set(),

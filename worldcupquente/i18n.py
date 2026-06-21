@@ -241,6 +241,10 @@ TEXT: dict[str, dict[str, str]] = {
         "position_defender": "Defender",
         "position_midfielder": "Midfielder",
         "position_forward": "Forward",
+        "inline_no_results": "No team found. Try another name.",
+        "inline_back_to_menu": "Back to menu",
+        "inline_back_to_players": "Back to players",
+        "inline_pick_group": "This team's group isn't defined yet. Choose a group:",
     },
     "pt": {
         "bot_command_start": "Iniciar o bot e ver comandos",
@@ -476,6 +480,10 @@ TEXT: dict[str, dict[str, str]] = {
         "position_defender": "Defensor",
         "position_midfielder": "Meio-campista",
         "position_forward": "Atacante",
+        "inline_no_results": "Nenhuma seleção encontrada. Tente outro nome.",
+        "inline_back_to_menu": "Voltar ao menu",
+        "inline_back_to_players": "Voltar ao elenco",
+        "inline_pick_group": "O grupo desta seleção ainda não está definido. Escolha um grupo:",
     },
 }
 

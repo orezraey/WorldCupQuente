@@ -6,7 +6,7 @@ from html import escape
 from typing import Any
 
 from worldcupquente.i18n import text
-from worldcupquente.team_translations import translated_team_name_html
+from worldcupquente.team_translations import translated_team_name, translated_team_name_html
 
 
 def format_standings_group_table(group: dict[str, Any], language: str = "en") -> str:
@@ -58,6 +58,62 @@ def format_standings_group_table(group: dict[str, Any], language: str = "en") ->
         ]
     )
     return "".join(lines)
+
+
+def format_standings_group_plain(group: dict[str, Any], language: str = "en") -> str:
+    """Render a standings group as plain HTML (no rich ``<table>``/``<h3>``).
+
+    Unlike :func:`format_standings_group_table`, this output is safe for inline
+    mode messages (``InputTextMessageContent``), which do not support Telegram's
+    rich message tags. The table is laid out inside a monospaced ``<pre>`` block.
+    """
+    entries = (group.get("standings") or {}).get("entries", [])
+    title = _standings_group_title(group, language)
+    if not entries:
+        return f"<b>{escape(title)}</b>\n{text('standings_empty_group', language)}"
+
+    header = (
+        text("team", language),
+        "Pts",
+        text("played_short", language),
+        text("wins_short", language),
+        text("draws_short", language),
+        text("losses_short", language),
+        text("goals_for_short", language),
+        text("goals_against_short", language),
+        text("goal_diff_short", language),
+    )
+    rows: list[tuple[str, ...]] = [header]
+    for entry in sorted(entries, key=_standings_entry_sort_key):
+        stats = _standings_stats(entry)
+        team = entry.get("team") or {}
+        # No emoji inside <pre>: emoji widths break monospace column alignment.
+        name = translated_team_name(team, include_emoji=False, language=language)
+        rows.append(
+            (
+                name,
+                _standings_stat(stats, "points"),
+                _standings_stat(stats, "gamesPlayed"),
+                _standings_stat(stats, "wins"),
+                _standings_stat(stats, "ties"),
+                _standings_stat(stats, "losses"),
+                _standings_stat(stats, "pointsFor"),
+                _standings_stat(stats, "pointsAgainst"),
+                _standings_stat(stats, "pointDifferential"),
+            )
+        )
+
+    columns = list(zip(*[[str(cell) for cell in row] for row in rows], strict=True))
+    widths = [max(len(cell) for cell in column) for column in columns]
+    body_lines = [
+        "  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=True))
+        for row in rows
+    ]
+    # Underline the header row to mark the separation from data rows.
+    body_lines.insert(1, "  ".join("-" * width for width in widths))
+    body = "\n".join(body_lines)
+    footer = text("standings_footer", language)
+    return f"<b>{escape(title)}</b>\n\n<pre>{escape(body)}</pre>\n\n{escape(footer)}"
 
 
 def _standings_group_title(group: dict[str, Any], language: str = "en") -> str:

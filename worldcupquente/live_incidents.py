@@ -62,9 +62,7 @@ def _collect_live_notifications(
                 _remember_goal(seen_goal_ids, event, detail)
                 if is_bootstrapped:
                     notifications.append((GOAL_NOTIFICATION, event, detail))
-        elif score_regressed:
-            score_snapshots[event_id] = current_score
-        elif current_score is not None and previous_score is not None:
+        elif current_score is not None and previous_score is not None and not score_regressed:
             for detail in _score_change_details(event, previous_score, current_score):
                 if _is_penalty_detail(detail):
                     scored_penalty_goal_keys.add(_play_match_key(event, detail))
@@ -73,16 +71,23 @@ def _collect_live_notifications(
                 _remember_goal(seen_goal_ids, event, detail)
                 if is_bootstrapped:
                     notifications.append((GOAL_NOTIFICATION, event, detail))
+        if score_regressed and not disallowed_goals:
+            previously_seen_goal_ids = set(seen_goal_ids)
+            for detail in _score_regression_disallowed_goal_details(event, previous_score, current_score):
+                if _disallowed_goal_already_seen(previously_seen_goal_ids, event, detail):
+                    continue
+                _remember_disallowed_goal(seen_goal_ids, event, detail)
+                if is_bootstrapped:
+                    notifications.append((DISALLOWED_GOAL_NOTIFICATION, event, detail))
         if current_score is not None:
             score_snapshots[event_id] = current_score
 
         for detail in disallowed_goals:
-            disallowed_goal_id = _live_event_id(DISALLOWED_GOAL_NOTIFICATION, event, detail)
-            if disallowed_goal_id in seen_goal_ids:
+            if _disallowed_goal_already_seen(seen_goal_ids, event, detail):
                 continue
             if _disallowed_goal_matches_confirmed(detail, official_goals):
                 continue
-            seen_goal_ids.add(disallowed_goal_id)
+            _remember_disallowed_goal(seen_goal_ids, event, detail)
             if is_bootstrapped:
                 notifications.append((DISALLOWED_GOAL_NOTIFICATION, event, detail))
 
@@ -212,6 +217,40 @@ def _disallowed_goal_matches_confirmed(
         if team_id == goal_team and minute == goal_minute and scorer == goal_scorer:
             return True
     return False
+
+
+def _disallowed_goal_already_seen(
+    seen_goal_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> bool:
+    return any(goal_id in seen_goal_ids for goal_id in _disallowed_goal_tracking_ids(event, detail))
+
+
+def _remember_disallowed_goal(
+    seen_goal_ids: set[str],
+    event: dict[str, Any],
+    detail: dict[str, Any],
+) -> None:
+    seen_goal_ids.update(_disallowed_goal_tracking_ids(event, detail))
+
+
+def _disallowed_goal_tracking_ids(event: dict[str, Any], detail: dict[str, Any]) -> set[str]:
+    ids = {_live_event_id(DISALLOWED_GOAL_NOTIFICATION, event, detail)}
+    event_id = str(event.get("id", ""))
+    team_id = str((detail.get("team") or {}).get("id", ""))
+    clock = detail.get("clock") or {}
+    minute = _clock_minute_key(clock)
+    scorer = _goal_scorer_key(detail)
+    if event_id and team_id and minute:
+        ids.add(f"disallowed-goal-minute:{event_id}:{team_id}:{minute}")
+        if scorer:
+            ids.add(f"disallowed-goal-minute:{event_id}:{team_id}:{minute}:{scorer}")
+    score_before = detail.get("scoreBefore")
+    score_after = detail.get("scoreAfter")
+    if event_id and team_id and score_before and score_after:
+        ids.add(f"disallowed-goal-score:{event_id}:{team_id}:{score_before}>{score_after}")
+    return ids
 
 
 def _live_event_id(notification_type: str, event: dict[str, Any], detail: dict[str, Any]) -> str:
@@ -348,6 +387,16 @@ def _numeric_minute(value: Any) -> float | None:
             return None
 
 
+def _clock_minute_key(clock: dict[str, Any]) -> str:
+    value = clock.get("value") or clock.get("displayValue")
+    numeric = _numeric_minute(value)
+    if numeric is None:
+        return str(value or "")
+    if numeric.is_integer():
+        return str(int(numeric))
+    return str(numeric)
+
+
 def _is_penalty_detail(detail: dict[str, Any]) -> bool:
     detail_type = detail.get("type") or {}
     text = " ".join(
@@ -425,6 +474,64 @@ def _score_change_details(
             )
         )
     return details
+
+
+def _score_regression_disallowed_goal_details(
+    event: dict[str, Any],
+    previous_score: tuple[int, ...],
+    current_score: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    status = competition.get("status") or event.get("status") or {}
+    details: list[dict[str, Any]] = []
+    for index, current in enumerate(current_score):
+        previous = previous_score[index] if index < len(previous_score) else 0
+        score_delta = previous - current
+        if score_delta <= 0 or index >= len(competitors):
+            continue
+        team = competitors[index].get("team") or {}
+        details.extend(
+            _disallowed_goal_details_for_score_regression(
+                team,
+                score_delta,
+                fallback_clock=status,
+                score_before=previous_score,
+                score_after=current_score,
+            )
+        )
+    return details
+
+
+def _disallowed_goal_details_for_score_regression(
+    team: dict[str, Any],
+    score_delta: int,
+    fallback_clock: dict[str, Any],
+    score_before: tuple[int, ...],
+    score_after: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    team_id = str(team.get("id", ""))
+    score_before_key = ":".join(str(score) for score in score_before)
+    score_after_key = ":".join(str(score) for score in score_after)
+    return [
+        {
+            "id": f"score-regression:{team_id}:{score_before_key}:{score_after_key}:{index}",
+            "source": "score-regression",
+            "disallowedGoal": True,
+            "shootout": False,
+            "clock": {
+                "value": fallback_clock.get("clock"),
+                "displayValue": fallback_clock.get("displayClock") or "",
+            },
+            "team": team,
+            "type": {"id": "score-regression", "type": "varDecision", "text": "Goal disallowed"},
+            "scoreBefore": score_before_key,
+            "scoreAfter": score_after_key,
+            "athletesInvolved": [],
+            "text": "Goal disallowed after score correction",
+        }
+        for index in range(score_delta)
+    ]
 
 
 def _scoring_details_for_score_change(

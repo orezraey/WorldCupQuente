@@ -55,3 +55,21 @@ def _get_query_language(query: object, context: ContextTypes.DEFAULT_TYPE) -> st
     preferences = _get_notification_preferences(context)
     preferences.ensure_chat(chat_id)
     return preferences.get_language(chat_id)
+
+
+def _get_inline_query_language(update: Update) -> str:
+    """Language for an inline query (no chat): derive from the user's client language."""
+    inline_query = getattr(update, "inline_query", None)
+    return _user_language(getattr(inline_query, "from_user", None))
+
+
+def _get_inline_callback_language(query: object) -> str:
+    """Language for a callback originating from an inline (via-bot) message."""
+    return _user_language(getattr(query, "from_user", None))
+
+
+def _user_language(user: object) -> str:
+    language_code = getattr(user, "language_code", None)
+    if isinstance(language_code, str) and language_code.lower().startswith("pt"):
+        return "pt"
+    return "en"

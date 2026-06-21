@@ -93,12 +93,19 @@ class WorldCupService:
     ) -> list[dict[str, Any]]:
         events = await self._sofascore_events_for_offsets((-1, 0, 1), use_cache=use_cache)
         live_events = [event for event in events if event_state(event) == "in"]
-        return await self.enrich_sofascore_live_events(sorted(live_events, key=_event_date_value), include_statistics=include_statistics)
+        return await self.enrich_sofascore_live_events(
+            sorted(live_events, key=_event_date_value),
+            include_statistics=include_statistics,
+            use_cache=use_cache,
+        )
 
     async def get_sofascore_monitor_events(self, use_cache: bool = True) -> dict[str, list[dict[str, Any]]]:
         events = await self._sofascore_events_for_offsets((-1, 0, 1), use_cache=use_cache)
         live_events = [event for event in events if event_state(event) == "in"]
-        enriched_live_events = await self.enrich_sofascore_live_events(sorted(live_events, key=_event_date_value))
+        enriched_live_events = await self.enrich_sofascore_live_events(
+            sorted(live_events, key=_event_date_value),
+            use_cache=use_cache,
+        )
         return {
             "live_events": enriched_live_events,
             "status_events": sorted(events, key=_event_date_value),
@@ -130,21 +137,34 @@ class WorldCupService:
         events: list[dict[str, Any]],
         *,
         include_statistics: bool = False,
+        use_cache: bool = True,
     ) -> list[dict[str, Any]]:
-        return list(await asyncio.gather(*(self.enrich_sofascore_live_event(event, include_statistics=include_statistics) for event in events)))
+        return list(
+            await asyncio.gather(
+                *(
+                    self.enrich_sofascore_live_event(
+                        event,
+                        include_statistics=include_statistics,
+                        use_cache=use_cache,
+                    )
+                    for event in events
+                )
+            )
+        )
 
     async def enrich_sofascore_live_event(
         self,
         event: dict[str, Any],
         *,
         include_statistics: bool = False,
+        use_cache: bool = True,
     ) -> dict[str, Any]:
         event_id = str(event.get("id") or "")
         if not event_id:
             return event
 
         incidents, probability = await asyncio.gather(
-            self._sofascore_match_incidents(event_id),
+            self._sofascore_match_incidents(event_id, use_cache=use_cache),
             self._sofascore_win_probability(event_id),
         )
 
@@ -250,14 +270,15 @@ class WorldCupService:
             self.cache.set(cache_key, probability, SOFASCORE_WIN_PROBABILITY_CACHE_SECONDS)
         return probability
 
-    async def _sofascore_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
+    async def _sofascore_match_incidents(self, event_id: int | str, *, use_cache: bool = True) -> list[dict[str, Any]]:
         cache_key = f"sofascore:incidents:{event_id}"
-        cached = self.cache.get(cache_key)
+        cached = self.cache.get(cache_key) if use_cache else None
         if cached is not None:
             return cached
 
         incidents = await self.sofascore_client.get_match_incidents(event_id)
-        self.cache.set(cache_key, incidents, SOFASCORE_INCIDENTS_CACHE_SECONDS)
+        if use_cache:
+            self.cache.set(cache_key, incidents, SOFASCORE_INCIDENTS_CACHE_SECONDS)
         return incidents
 
     async def _hydrate_sofascore_event_venues(
@@ -1083,22 +1104,52 @@ def _sofascore_score_after(incident: dict[str, Any], reversed_match: bool) -> st
 
 
 def _sofascore_player(incident: dict[str, Any]) -> dict[str, Any]:
-    player = _incident_value(incident, "player")
-    if not isinstance(player, dict):
-        player = {}
-    player_name = (
-        player.get("name")
-        or player.get("shortName")
-        or player.get("slug")
-        or _incident_value(incident, "playerName", "player_name")
+    player = _sofascore_player_payload(incident)
+    player_name = _sofascore_player_name(player) or _incident_value(
+        incident,
+        "playerName",
+        "player_name",
+        "playerShortName",
+        "player_short_name",
+        "scorerName",
+        "scorer_name",
     )
-    if not player and not player_name:
+    player_id = player.get("id") or player.get("playerId") or _incident_value(incident, "playerId", "player_id")
+    if not player_id and not player_name:
         return {}
     return {
-        "id": str(player.get("id") or ""),
+        "id": str(player_id or ""),
         "displayName": str(player_name or ""),
-        "fullName": str(player.get("name") or player_name or ""),
+        "fullName": str(_sofascore_player_full_name(player) or player_name or ""),
     }
+
+
+def _sofascore_player_payload(incident: dict[str, Any]) -> dict[str, Any]:
+    for key in ("player", "scorer", "footballer", "athlete", "playerOfIncident", "incidentPlayer"):
+        value = _incident_value(incident, key)
+        if isinstance(value, dict):
+            nested_player = value.get("player")
+            if isinstance(nested_player, dict):
+                return nested_player
+            return value
+    return {}
+
+
+def _sofascore_player_name(player: dict[str, Any]) -> Any:
+    return (
+        player.get("displayName")
+        or player.get("fullName")
+        or player.get("name")
+        or player.get("shortName")
+        or _sofascore_player_full_name(player)
+        or player.get("slug")
+    )
+
+
+def _sofascore_player_full_name(player: dict[str, Any]) -> str:
+    first_name = str(player.get("firstName") or "").strip()
+    last_name = str(player.get("lastName") or "").strip()
+    return " ".join(part for part in (first_name, last_name) if part)
 
 
 def _sofascore_incident_team(

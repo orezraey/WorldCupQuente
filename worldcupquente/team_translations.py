@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from html import escape
 from typing import Any
 
@@ -79,6 +80,21 @@ TEAM_TRANSLATIONS_BY_ENGLISH_NAME = {
     str(translation.get("names", {}).get("en", "")).casefold(): translation
     for translation in TEAM_TRANSLATIONS.values()
     if translation.get("names", {}).get("en")
+}
+
+
+def _normalize_team_query(value: Any) -> str:
+    """Casefold and strip combining marks for accent-insensitive matching."""
+    if not value:
+        return ""
+    folded = str(value).casefold()
+    decomposed = unicodedata.normalize("NFD", folded)
+    return "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+
+
+_NORMALIZED_ALIASES = {
+    _normalize_team_query(key): _normalize_team_query(target)
+    for key, target in SOFASCORE_TEAM_NAME_ALIASES.items()
 }
 
 
@@ -198,3 +214,68 @@ def _country_flag(alpha2: Any) -> str:
     if not isinstance(alpha2, str) or len(alpha2) != 2 or not alpha2.isalpha():
         return ""
     return "".join(chr(0x1F1E6 + ord(char) - ord("A")) for char in alpha2.upper())
+
+
+def filter_teams_by_name(
+    teams: list[dict[str, Any]],
+    query: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Filter SofaScore teams by name (accent- and case-insensitive).
+
+    Matches against each team's translated English/Portuguese names plus the raw
+    SofaScore name fields. Results are ranked by relevance: exact matches first,
+    then prefix matches, then substring matches. Useful for Telegram inline mode.
+    """
+    normalized_query = _normalize_team_query(query)
+    if not normalized_query:
+        return list(teams[:limit])
+    alias_normalized = _NORMALIZED_ALIASES.get(normalized_query, "")
+
+    exact: list[dict[str, Any]] = []
+    prefix: list[dict[str, Any]] = []
+    substring: list[dict[str, Any]] = []
+
+    seen_ids: set[str] = set()
+    for team in teams:
+        team_id = str(team.get("id") or "")
+        if not team_id or team_id in seen_ids:
+            continue
+        names = _candidate_team_names(team)
+        if not names:
+            continue
+
+        if normalized_query in names or (alias_normalized and alias_normalized in names):
+            bucket = exact
+        elif any(name.startswith(normalized_query) for name in names):
+            bucket = prefix
+        elif any(normalized_query in name for name in names):
+            bucket = substring
+        else:
+            continue
+
+        seen_ids.add(team_id)
+        bucket.append(team)
+
+    results = exact + prefix + substring
+    return results[:limit]
+
+
+def _candidate_team_names(team: dict[str, Any]) -> list[str]:
+    """Normalized candidate names (EN, PT, and raw SofaScore fields) for matching."""
+    translation = _sofascore_translation(team)
+    translation_names = translation.get("names") or {}
+    raw_values = [
+        team.get("name"),
+        team.get("shortName"),
+        team.get("displayName"),
+        team.get("shortDisplayName"),
+        translation_names.get("en"),
+        translation_names.get("pt"),
+    ]
+    normalized: list[str] = []
+    for value in raw_values:
+        normalized_name = _normalize_team_query(value)
+        if normalized_name and normalized_name not in normalized:
+            normalized.append(normalized_name)
+    return normalized

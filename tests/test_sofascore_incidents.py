@@ -171,6 +171,29 @@ def test_normalize_sofascore_var_goal_not_awarded_as_disallowed_goal():
     assert disallowed_goal["athletesInvolved"][0]["displayName"] == "Player Four"
 
 
+def test_normalize_sofascore_goal_uses_alternative_scorer_payload():
+    normalized = _normalize_sofascore_incidents(
+        _event(),
+        [
+            {
+                "id": 60,
+                "incidentType": "goal",
+                "incidentClass": "regular",
+                "time": 30,
+                "isHome": False,
+                "homeScore": 0,
+                "awayScore": 1,
+                "scorer": {"playerId": 9, "displayName": "Away Scorer"},
+            }
+        ],
+    )
+
+    goal = normalized["goals"][0]
+
+    assert goal["athletesInvolved"][0]["id"] == "9"
+    assert goal["athletesInvolved"][0]["displayName"] == "Away Scorer"
+
+
 def test_sofascore_incidents_are_preferred_over_existing_heuristics():
     event = _event()
     event["competitions"][0]["details"] = [

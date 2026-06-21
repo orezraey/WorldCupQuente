@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from worldcupquente.handlers.calendar import handle_calendar_callback
 from worldcupquente.handlers.config import handle_config_callback
 from worldcupquente.handlers.history import handle_history_callback
+from worldcupquente.handlers.inline import handle_inline_callback
 from worldcupquente.handlers.live import handle_live_callback
 from worldcupquente.handlers.standings import handle_standings_callback
 from worldcupquente.handlers.teams import handle_teams_callback
@@ -55,3 +56,5 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await handle_live_callback(query, context)
     elif data.startswith("config:"):
         await handle_config_callback(query, context)
+    elif data.startswith("inl:"):
+        await handle_inline_callback(query, context)

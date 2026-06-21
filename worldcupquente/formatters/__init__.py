@@ -36,7 +36,10 @@ from worldcupquente.formatters.rosters import (
     format_sofascore_team_players,
     format_sofascore_team_statistics,
 )
-from worldcupquente.formatters.standings import format_standings_group_table
+from worldcupquente.formatters.standings import (
+    format_standings_group_plain,
+    format_standings_group_table,
+)
 from worldcupquente.formatters.utils import split_telegram_message
 
 __all__ = [
@@ -51,6 +54,7 @@ __all__ = [
     "format_player_ratings_table",
     "format_games",
     "format_standings_group_table",
+    "format_standings_group_plain",
     "format_sofascore_team_menu",
     "format_sofascore_team_players",
     "format_sofascore_team_events",

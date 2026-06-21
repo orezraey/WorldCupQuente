@@ -21,6 +21,7 @@ from worldcupquente.team_translations import translated_sofascore_team_name, tra
 TEAMS_PAGE_SIZE = 12
 CALENDAR_GAMES_PAGE_SIZE = 6
 HISTORY_GAMES_PAGE_SIZE = 6
+_SQUAD_POSITION_ORDER = {"G": 0, "D": 1, "M": 2, "F": 3}
 
 
 def build_standings_groups_keyboard(
@@ -484,3 +485,94 @@ def _standings_group_label(group: dict[str, Any], language: str = "en") -> str:
 def _standings_group_sort_key(group: dict[str, Any]) -> int:
     group_id = str(group.get("id") or "")
     return int(group_id) if group_id.isdigit() else 999
+
+
+def build_inline_team_menu_keyboard(team_id: str, language: str = "en") -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text("team_last_games", language), callback_data=f"inl:last:{team_id}"),
+            InlineKeyboardButton(text("team_next_games", language), callback_data=f"inl:next:{team_id}"),
+        ],
+        [
+            InlineKeyboardButton(text("team_players", language), callback_data=f"inl:players:{team_id}:0"),
+            InlineKeyboardButton(text("group", language), callback_data=f"inl:group:{team_id}"),
+        ],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def build_inline_back_keyboard(team_id: str, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text("inline_back_to_menu", language), callback_data=f"inl:menu:{team_id}")]]
+    )
+
+
+def build_inline_squad_keyboard(
+    team_id: str,
+    players: list[dict[str, Any]],
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buttons = [
+        InlineKeyboardButton(
+            _squad_player_label(entry, language),
+            callback_data=f"inl:player:{team_id}:{_inline_player_id(entry)}",
+        )
+        for entry in sorted(players, key=_squad_sort_key)
+        if _inline_player_id(entry)
+    ]
+    for index in range(0, len(buttons), 2):
+        rows.append(buttons[index : index + 2])
+    rows.append([InlineKeyboardButton(text("inline_back_to_menu", language), callback_data=f"inl:menu:{team_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_inline_player_back_keyboard(team_id: str, language: str = "en") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text("inline_back_to_players", language), callback_data=f"inl:players:{team_id}:0")]]
+    )
+
+
+def _squad_player_label(entry: dict[str, Any], language: str = "en") -> str:
+    player = entry.get("player") or {}
+    name = player.get("shortName") or player.get("name") or text("player", language)
+    shirt = entry.get("shirtNumber") or player.get("shirtNumber") or player.get("jerseyNumber")
+    return f"#{shirt} {name}" if shirt not in (None, "") else str(name)
+
+
+def _inline_player_id(entry: dict[str, Any]) -> str:
+    player = entry.get("player") or {}
+    return str(player.get("id") or "")
+
+
+def _squad_sort_key(entry: dict[str, Any]) -> tuple[int, int, str]:
+    player = entry.get("player") or {}
+    position = str(player.get("position") or "").upper()
+    pos_order = _SQUAD_POSITION_ORDER.get(position, 4)
+    shirt = player.get("shirtNumber") or entry.get("shirtNumber") or player.get("jerseyNumber")
+    shirt_text = str(shirt or "")
+    return (
+        pos_order,
+        int(shirt_text) if shirt_text.isdigit() else 999,
+        str(player.get("name") or ""),
+    )
+
+
+def build_inline_groups_list_keyboard(
+    team_id: str,
+    groups: list[dict[str, Any]],
+    language: str = "en",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buttons = [
+        InlineKeyboardButton(
+            _standings_group_label(group, language),
+            callback_data=f"inl:groupopen:{team_id}:{group.get('id')}",
+        )
+        for group in sorted(groups, key=_standings_group_sort_key)
+        if group.get("id")
+    ]
+    for index in range(0, len(buttons), 4):
+        rows.append(buttons[index : index + 4])
+    rows.append([InlineKeyboardButton(text("inline_back_to_menu", language), callback_data=f"inl:menu:{team_id}")])
+    return InlineKeyboardMarkup(rows)

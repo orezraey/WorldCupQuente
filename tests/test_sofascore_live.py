@@ -121,6 +121,26 @@ def test_sofascore_monitor_events_return_status_and_enriched_live_events():
     assert events["live_events"][0]["sofascoreIncidents"]["goals"]
 
 
+def test_sofascore_monitor_events_ignore_stale_incident_cache_when_cache_disabled():
+    service = _service()
+    today = service.sofascore_date_param_for_offset()
+    service.cache.set("sofascore:incidents:20", [], 60)
+    fake_client = _FakeSofaScoreLiveClient(
+        scheduled_events={
+            service.sofascore_date_param_for_offset(-1): [],
+            today: [_raw_event(20, timestamp=_date_timestamp(today), status_type="inprogress", description="1st half")],
+            service.sofascore_date_param_for_offset(1): [],
+        },
+        incidents={20: [_goal_incident()]},
+    )
+    service.sofascore_client = fake_client  # type: ignore[assignment]
+
+    events = asyncio.run(service.get_sofascore_monitor_events(use_cache=False))
+
+    assert fake_client.incident_calls == ["20"]
+    assert events["live_events"][0]["sofascoreIncidents"]["goals"]
+
+
 def test_sofascore_player_ratings_use_native_event_id():
     service = _service()
     fake_client = _FakeSofaScoreLiveClient(lineups={10: _lineups_response()})
@@ -178,6 +198,7 @@ class _FakeSofaScoreLiveClient:
         self._world_cup_teams = world_cup_teams or []
         self.event_details = event_details or {}
         self.scheduled_calls: list[str] = []
+        self.incident_calls: list[str] = []
         self.lineup_calls: list[str] = []
         self.event_detail_calls: list[str] = []
 
@@ -194,6 +215,7 @@ class _FakeSofaScoreLiveClient:
         return self.event_details.get(int(event_id), {})
 
     async def get_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
+        self.incident_calls.append(str(event_id))
         return self.incidents.get(int(event_id), [])
 
     async def get_match_statistics(self, event_id: int | str) -> list[dict[str, Any]]:
