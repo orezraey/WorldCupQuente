@@ -16,6 +16,7 @@ from worldcupquente.event_utils import (
     _event_local_date_param,
     event_state,
 )
+from worldcupquente.playoff_bracket import PlayoffProjection, build_projection
 from worldcupquente.sofascore_client import SofaScoreClient
 from worldcupquente.team_translations import sofascore_legacy_team_id
 
@@ -40,6 +41,8 @@ SOFASCORE_TEAM_STATISTICS_CACHE_SECONDS = 60 * 60
 SOFASCORE_WIN_PROBABILITY_CACHE_SECONDS = 30
 SOFASCORE_PLAYER_DETAIL_CACHE_SECONDS = 60 * 60
 SOFASCORE_PLAYER_IMAGE_CACHE_SECONDS = 60 * 60 * 24
+SOFASCORE_CUP_TREES_CACHE_SECONDS = 30
+SOFASCORE_PLAYOFF_PROJECTION_CACHE_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -574,6 +577,42 @@ class WorldCupService:
     async def get_sofascore_standings_group(self, group_id: str, use_cache: bool = True) -> dict[str, Any] | None:
         groups = await self.get_sofascore_standings_groups(use_cache=use_cache)
         return next((group for group in groups if str(group.get("id", "")) == str(group_id)), None)
+
+    async def get_sofascore_cup_trees(self, use_cache: bool = True) -> list[dict[str, Any]]:
+        cache_key = f"sofascore:cup-trees:{SOFASCORE_WORLD_CUP_TOURNAMENT_ID}:{SOFASCORE_WORLD_CUP_SEASON_ID}"
+        cached = self.cache.get(cache_key) if use_cache else None
+        if cached is not None:
+            return cached
+
+        cup_trees = await self.sofascore_client.get_cup_trees(
+            SOFASCORE_WORLD_CUP_TOURNAMENT_ID,
+            SOFASCORE_WORLD_CUP_SEASON_ID,
+        )
+        if use_cache:
+            self.cache.set(cache_key, cup_trees, SOFASCORE_CUP_TREES_CACHE_SECONDS)
+        return cup_trees
+
+    async def get_sofascore_playoff_projection(
+        self,
+        use_cache: bool = True,
+    ) -> PlayoffProjection | None:
+        cache_key = f"sofascore:playoff-projection:{SOFASCORE_WORLD_CUP_TOURNAMENT_ID}:{SOFASCORE_WORLD_CUP_SEASON_ID}"
+        cached = self.cache.get(cache_key) if use_cache else None
+        if cached is not None:
+            return cached
+
+        cup_trees, standings_groups = await asyncio.gather(
+            self.get_sofascore_cup_trees(use_cache=use_cache),
+            self.get_sofascore_standings_groups(use_cache=use_cache),
+        )
+        if not cup_trees:
+            return None
+
+        primary_tree = cup_trees[0]
+        projection = build_projection(primary_tree, standings_groups)
+        if use_cache:
+            self.cache.set(cache_key, projection, SOFASCORE_PLAYOFF_PROJECTION_CACHE_SECONDS)
+        return projection
 
 def _normalize_sofascore_standings_group(group: dict[str, Any], index: int) -> dict[str, Any]:
     group_sign = str(group.get("groupSign") or "").strip()

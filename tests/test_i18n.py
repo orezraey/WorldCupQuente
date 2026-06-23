@@ -89,6 +89,7 @@ def test_bot_commands_are_localized():
         "calendar",
         "history",
         "standings",
+        "playoff",
         "teams",
         "config",
     ]
@@ -99,6 +100,7 @@ def test_bot_commands_are_localized():
         "calendario",
         "historico",
         "tabela",
+        "matamata",
         "selecoes",
         "config",
     ]
@@ -495,6 +497,54 @@ def test_goal_notification_uses_incident_score_after_when_event_score_lags():
     assert "⚽️ <b>GOL!</b> 🇨🇼 Curaçao" in output
     assert "🇩🇪 Alemanha 0 x 1 🇨🇼 Curaçao" in output
     assert "🇩🇪 Alemanha 0 x 0 🇨🇼 Curaçao" not in output
+
+
+def test_own_goal_notification_shows_benefiting_team():
+    from worldcupquente.formatters import format_goal_notification
+    from worldcupquente.services import _normalize_sofascore_incidents
+
+    event = {
+        "competitions": [
+            {
+                "status": {"type": {"state": "in"}},
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "team": {"id": "482", "displayName": "Portugal", "abbreviation": "POR"},
+                        "score": "4",
+                    },
+                    {
+                        "homeAway": "away",
+                        "team": {"id": "2570", "displayName": "Uzbekistan", "abbreviation": "UZB"},
+                        "score": "0",
+                    },
+                ],
+            }
+        ],
+    }
+    normalized = _normalize_sofascore_incidents(
+        event,
+        [
+            {
+                "id": 99,
+                "incidentType": "goal",
+                "incidentClass": "ownGoal",
+                "time": 60,
+                "isHome": True,
+                "homeScore": 4,
+                "awayScore": 0,
+                "player": {"id": 1, "name": "Abduvokhid Nematov"},
+            }
+        ],
+    )
+    goal = normalized["goals"][0]
+
+    output = format_goal_notification(event, goal, language="pt")
+
+    assert "⚽️ <b>GOL CONTRA!</b> 🇵🇹 Portugal" in output
+    assert "Uzbequist" not in output.split("\n", 1)[0]
+    assert "Abduvokhid Nematov" in output
+    assert "🇵🇹 Portugal 4 x 0 🇺🇿 Uzbequistão" in output
 
 
 def test_win_probability_is_omitted_when_odds_are_null():

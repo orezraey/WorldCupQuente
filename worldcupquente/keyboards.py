@@ -38,6 +38,7 @@ def build_standings_groups_keyboard(
     ]
     for index in range(0, len(buttons), 4):
         rows.append(buttons[index : index + 4])
+    rows.append([InlineKeyboardButton(text("playoff_button", language), callback_data="playoff:menu")])
     return InlineKeyboardMarkup(rows)
 
 

@@ -12,6 +12,7 @@ from worldcupquente.handlers.config import config_command
 from worldcupquente.handlers.history import history_command
 from worldcupquente.handlers.inline import inline_query_handler
 from worldcupquente.handlers.live import live_command, today_command
+from worldcupquente.handlers.playoffs import playoff_command
 from worldcupquente.handlers.standings import standings_command
 from worldcupquente.handlers.teams import teams_command
 
@@ -24,6 +25,7 @@ def get_handlers() -> list[Any]:
         CommandHandler(["calendario", "calendar"], calendar_command),
         CommandHandler(["historico", "history"], history_command),
         CommandHandler(["tabela", "standings"], standings_command),
+        CommandHandler(["matamata", "playoff"], playoff_command),
         CommandHandler(["selecoes", "teams"], teams_command),
         CommandHandler("config", config_command),
         InlineQueryHandler(inline_query_handler),

@@ -29,7 +29,7 @@ async def test_post_init_sets_commands_and_starts_monitor(mocker):
     mock_app.bot.set_my_commands.assert_called_once()
     called_commands = mock_app.bot.set_my_commands.call_args[0][0]
 
-    assert len(called_commands) == 8
+    assert len(called_commands) == 9
     assert called_commands[0].command == "start"
     assert called_commands[0].description == "Start the bot and see commands"
     assert called_commands[1].command == "today"
@@ -37,8 +37,9 @@ async def test_post_init_sets_commands_and_starts_monitor(mocker):
     assert called_commands[3].command == "calendar"
     assert called_commands[4].command == "history"
     assert called_commands[5].command == "standings"
-    assert called_commands[6].command == "teams"
-    assert called_commands[7].command == "config"
+    assert called_commands[6].command == "playoff"
+    assert called_commands[7].command == "teams"
+    assert called_commands[8].command == "config"
 
     # Assert start_live_monitor was called
     mock_start_live_monitor.assert_called_once_with(mock_app)

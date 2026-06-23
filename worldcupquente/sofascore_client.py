@@ -78,6 +78,16 @@ class SofaScoreClient:
         standings = data.get("standings", [])
         return standings if isinstance(standings, list) else []
 
+    async def get_cup_trees(self, unique_tournament_id: int | str, season_id: int | str) -> list[dict[str, Any]]:
+        try:
+            data = await self.get_json(
+                f"/unique-tournament/{unique_tournament_id}/season/{season_id}/cuptrees"
+            )
+        except RuntimeError:
+            return []
+        cup_trees = data.get("cupTrees", [])
+        return cup_trees if isinstance(cup_trees, list) else []
+
     async def get_tournament_events(
         self,
         unique_tournament_id: int | str,

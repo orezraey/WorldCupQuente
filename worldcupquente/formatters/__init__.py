@@ -29,6 +29,10 @@ from worldcupquente.formatters.players import (
     format_player_match_statistics,
     lineup_player_rating,
 )
+from worldcupquente.formatters.playoffs import (
+    format_playoff_bracket_plain,
+    format_playoff_bracket_rich,
+)
 from worldcupquente.formatters.rosters import (
     format_sofascore_team_achievements,
     format_sofascore_team_events,
@@ -55,6 +59,8 @@ __all__ = [
     "format_games",
     "format_standings_group_table",
     "format_standings_group_plain",
+    "format_playoff_bracket_rich",
+    "format_playoff_bracket_plain",
     "format_sofascore_team_menu",
     "format_sofascore_team_players",
     "format_sofascore_team_events",
