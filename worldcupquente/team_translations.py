@@ -27,8 +27,7 @@ TEAM_TRANSLATIONS: dict[str, dict[str, Any]] = {
     "2620": {"names": {"en": "Egypt", "pt": "Egito"}, "emoji": "🇪🇬"},
     "448": {
         "names": {"en": "England", "pt": "Inglaterra"},
-        "emoji": "🏴",
-        "custom_emoji_id": "5388763627975095656",
+        "emoji": "🏴\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F",
     },
     "478": {"names": {"en": "France", "pt": "França"}, "emoji": "🇫🇷"},
     "481": {"names": {"en": "Germany", "pt": "Alemanha"}, "emoji": "🇩🇪"},
@@ -51,8 +50,7 @@ TEAM_TRANSLATIONS: dict[str, dict[str, Any]] = {
     "655": {"names": {"en": "Saudi Arabia", "pt": "Arábia Saudita"}, "emoji": "🇸🇦"},
     "580": {
         "names": {"en": "Scotland", "pt": "Escócia"},
-        "emoji": "🏴",
-        "custom_emoji_id": "5388717405537053993",
+        "emoji": "🏴\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F",
     },
     "654": {"names": {"en": "Senegal", "pt": "Senegal"}, "emoji": "🇸🇳"},
     "467": {"names": {"en": "South Africa", "pt": "África do Sul"}, "emoji": "🇿🇦"},
@@ -126,6 +124,15 @@ def translated_team_name_html(
     if emoji:
         return f"{escape(emoji)} {name}"
     return name
+
+
+def translated_team_emoji_html(team: dict[str, Any]) -> str:
+    translation = _team_translation(team)
+    emoji = translation.get("emoji") or _country_flag((team.get("country") or {}).get("alpha2"))
+    custom_emoji_id = translation.get("custom_emoji_id")
+    if custom_emoji_id and emoji:
+        return f'<tg-emoji emoji-id="{escape(custom_emoji_id)}">{escape(emoji)}</tg-emoji>'
+    return escape(emoji) if emoji else ""
 
 
 def translated_sofascore_team_name(

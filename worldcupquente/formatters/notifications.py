@@ -18,7 +18,7 @@ from worldcupquente.formatters.utils import (
     format_win_probability,
 )
 from worldcupquente.i18n import text
-from worldcupquente.team_translations import translated_team_name_html
+from worldcupquente.team_translations import translated_team_emoji_html, translated_team_name_html
 
 KICKOFF_EMOJI = '<tg-emoji emoji-id="5264919878082509254">⚽️</tg-emoji>'
 
@@ -39,7 +39,7 @@ def format_match_status_notification(event: dict[str, Any], tz: ZoneInfo, langua
             header_key,
             language,
             include_win_probability=not is_full_time,
-            include_goal_scorers=is_full_time,
+            include_goal_scorers=True,
         )
     )
 
@@ -148,7 +148,7 @@ def _format_period_end_lines(
     goal_lines = _format_goal_scorers(event, language) if include_goal_scorers else []
     if goal_lines:
         lines.append("")
-        lines.extend(goal_lines)
+        lines.append(_format_blockquote(goal_lines))
     win_probability_lines = format_win_probability(event, language) if include_win_probability else []
     if win_probability_lines:
         lines.append("")
@@ -161,7 +161,21 @@ def _period_end_matchup_state(header_key: str) -> str:
 
 
 def _rich_paragraph(lines: list[str]) -> str:
-    return f"<p>{'<br/>'.join(line for line in lines if line is not None)}</p>"
+    blocks: list[str] = []
+    paragraph_lines: list[str] = []
+    for line in lines:
+        if line is None:
+            continue
+        if line.startswith("<blockquote>"):
+            if paragraph_lines:
+                blocks.append(f"<p>{'<br/>'.join(paragraph_lines)}</p>")
+                paragraph_lines = []
+            blocks.append(line.replace("\n", "<br/>"))
+            continue
+        paragraph_lines.append(line)
+    if paragraph_lines:
+        blocks.append(f"<p>{'<br/>'.join(paragraph_lines)}</p>")
+    return "".join(blocks)
 
 
 def _format_goal_scorers(event: dict[str, Any], language: str = "en") -> list[str]:
@@ -169,8 +183,12 @@ def _format_goal_scorers(event: dict[str, Any], language: str = "en") -> list[st
     if not goals:
         return []
 
-    grouped_goals: list[dict[str, Any]] = []
-    grouped_by_scorer: dict[str, dict[str, Any]] = {}
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    home = _find_competitor(competitors, "home")
+    away = _find_competitor(competitors, "away")
+    previous_score: tuple[int, int] | None = (0, 0)
+    lines: list[str] = []
     for goal in goals:
         athletes = goal.get("athletesInvolved") or [
             participant.get("athlete") or {}
@@ -180,34 +198,25 @@ def _format_goal_scorers(event: dict[str, Any], language: str = "en") -> list[st
         scorer = (athletes or [{}])[0]
         scorer_name = scorer.get("displayName") or scorer.get("fullName") or text("scorer_unavailable", language)
         minute = (goal.get("clock") or {}).get("displayValue") or text("minute_unavailable", language)
-        scorer_key = str(scorer.get("id") or scorer_name)
-        if scorer_key not in grouped_by_scorer:
-            grouped_by_scorer[scorer_key] = {
-                "scorer_name": scorer_name,
-                "goals": [],
-            }
-            grouped_goals.append(grouped_by_scorer[scorer_key])
-        grouped_by_scorer[scorer_key]["goals"].append(
-            {
-                "minute": minute,
-                "own_goal": is_own_goal_play(goal),
-            }
+        score_after = _score_values(goal.get("scoreAfter"))
+        team_label = _goal_team_emoji_label(goal, home, away, previous_score=previous_score)
+        own_goal_suffix = f" ({text('own_goal_suffix', language)})" if is_own_goal_play(goal) else ""
+        lines.append(
+            f"⚽️ {_goal_player_prefix(team_label)}{escape(str(scorer_name))} {escape(str(minute))}{own_goal_suffix}"
         )
+        if score_after is not None:
+            previous_score = score_after
 
-    return [_format_grouped_goal_line(group, language) for group in grouped_goals]
+    return lines
 
 
-def _format_grouped_goal_line(group: dict[str, Any], language: str = "en") -> str:
-    scorer_name = escape(str(group["scorer_name"]))
-    goal_parts = []
-    for index, goal in enumerate(group["goals"]):
-        minute = escape(str(goal["minute"]))
-        own_goal_suffix = f" ({text('own_goal_suffix', language)})" if goal["own_goal"] else ""
-        if index == 0:
-            goal_parts.append(f"⚽️ {scorer_name} {minute}{own_goal_suffix}")
-        else:
-            goal_parts.append(f"⚽️ {minute}{own_goal_suffix}")
-    return ", ".join(goal_parts)
+def _format_blockquote(lines: list[str]) -> str:
+    body = "\n".join(lines)
+    return f"<blockquote>{body}</blockquote>"
+
+
+def _goal_player_prefix(team_label: str) -> str:
+    return f"{team_label} " if team_label else ""
 
 
 def format_goal_notification(
@@ -232,7 +241,9 @@ def format_goal_notification(
     state = (status.get("type") or {}).get("state", "in")
 
     header_key = "own_goal_header" if is_own_goal_play(detail) else "goal_header"
-    header = f"⚽️ <b>{text(header_key, language)}</b>"
+    team_label = _goal_team_label(detail, home, away, language)
+    header_suffix = f" {team_label}" if team_label else ""
+    header = f"⚽️ <b>{text(header_key, language)}</b>{header_suffix}"
 
     lines = [
         header,
@@ -294,6 +305,118 @@ def _format_goal_matchup(
     away_name = translated_team_name_html(away_team, language=language) if away_team else text("away", language)
     home_score, away_score = score_after
     return f"{home_name} {escape(home_score)} x {escape(away_score)} {away_name}"
+
+
+def _goal_team_label(
+    goal: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+    language: str,
+    *,
+    previous_score: tuple[int, int] | None = None,
+) -> str:
+    side = _goal_benefited_side(goal, home, away, previous_score=previous_score)
+    team = _team_for_side(side, home, away)
+    if not team:
+        return ""
+    return translated_team_name_html(team, language=language)
+
+
+def _goal_team_emoji_label(
+    goal: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+    *,
+    previous_score: tuple[int, int] | None = None,
+) -> str:
+    side = _goal_benefited_side(goal, home, away, previous_score=previous_score)
+    team = _team_for_side(side, home, away)
+    if not team:
+        return ""
+    return translated_team_emoji_html(team)
+
+
+def _goal_benefited_side(
+    goal: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+    *,
+    previous_score: tuple[int, int] | None = None,
+) -> str | None:
+    score_before = _score_values(goal.get("scoreBefore")) or previous_score
+    score_after = _score_values(goal.get("scoreAfter"))
+    if score_before is not None and score_after is not None:
+        side = _score_increment_side(score_before, score_after)
+        if side:
+            return side
+
+    team_side = _goal_team_side(goal, home, away)
+    if is_own_goal_play(goal) and team_side:
+        return "away" if team_side == "home" else "home"
+    return team_side
+
+
+def _goal_team_side(
+    goal: dict[str, Any],
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+) -> str | None:
+    team_id = str((goal.get("team") or {}).get("id", ""))
+    if not team_id:
+        return None
+    home_team = (home or {}).get("team") or {}
+    away_team = (away or {}).get("team") or {}
+    if team_id == str(home_team.get("id", "")):
+        return "home"
+    if team_id == str(away_team.get("id", "")):
+        return "away"
+    return None
+
+
+def _team_for_side(
+    side: str | None,
+    home: dict[str, Any] | None,
+    away: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if side == "home":
+        return (home or {}).get("team") or {}
+    if side == "away":
+        return (away or {}).get("team") or {}
+    return {}
+
+
+def _score_values(score: Any) -> tuple[int, int] | None:
+    if isinstance(score, str):
+        separator = ":" if ":" in score else "-" if "-" in score else None
+        if separator is None:
+            return None
+        home_score, away_score = score.split(separator, 1)
+        return _score_pair(home_score, away_score)
+    if isinstance(score, (list, tuple)) and len(score) >= 2:
+        return _score_pair(score[0], score[1])
+    if isinstance(score, dict):
+        home_score = _first_present_score_value(score, "home", "homeScore")
+        away_score = _first_present_score_value(score, "away", "awayScore")
+        if home_score is not None and away_score is not None:
+            return _score_pair(home_score, away_score)
+    return None
+
+
+def _score_pair(home_score: Any, away_score: Any) -> tuple[int, int] | None:
+    try:
+        return int(home_score), int(away_score)
+    except (TypeError, ValueError):
+        return None
+
+
+def _score_increment_side(score_before: tuple[int, int], score_after: tuple[int, int]) -> str | None:
+    home_before, away_before = score_before
+    home_after, away_after = score_after
+    if home_after > home_before and away_after == away_before:
+        return "home"
+    if away_after > away_before and home_after == home_before:
+        return "away"
+    return None
 
 
 def _score_after_values(detail: dict[str, Any]) -> tuple[str, str] | None:

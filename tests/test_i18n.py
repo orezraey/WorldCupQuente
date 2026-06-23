@@ -484,6 +484,7 @@ def test_goal_notification_uses_incident_score_after_when_event_score_lags():
     event["competitions"][0]["competitors"][0]["score"] = "0"
     event["competitions"][0]["competitors"][1]["score"] = "0"
     goal = {
+        "team": {"id": "11678"},
         "clock": {"displayValue": "20'"},
         "athletesInvolved": [{"displayName": "Emam Ashour"}],
         "scoreAfter": {"home": 0, "away": 1},
@@ -491,6 +492,7 @@ def test_goal_notification_uses_incident_score_after_when_event_score_lags():
 
     output = format_goal_notification(event, goal, language="pt")
 
+    assert "⚽️ <b>GOL!</b> 🇨🇼 Curaçao" in output
     assert "🇩🇪 Alemanha 0 x 1 🇨🇼 Curaçao" in output
     assert "🇩🇪 Alemanha 0 x 0 🇨🇼 Curaçao" not in output
 

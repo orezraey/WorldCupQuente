@@ -800,6 +800,29 @@ def test_halftime_notifications_keep_win_probability_when_odds_exist():
     assert "<blockquote>🇳🇱 Países Baixos 34%" in app.bot.messages[0]["text"]
 
 
+def test_halftime_notification_shows_goal_scorers_before_win_probability():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "HT")
+    event["competitions"][0]["details"] = [
+        {
+            "id": "goal-1",
+            "scoringPlay": True,
+            "team": {"id": "449"},
+            "clock": {"displayValue": "36'"},
+            "athletesInvolved": [{"id": "player-1", "displayName": "Nizar Al-Rashdan"}],
+        }
+    ]
+    event["winProbability"] = {"home": 34, "draw": 33, "away": 33}
+
+    asyncio.run(_send_status_notifications(app, [(HALFTIME_NOTIFICATION, event)], preferences, service))
+
+    message = app.bot.messages[0]["text"]
+    assert "<blockquote>⚽️ 🇳🇱 Nizar Al-Rashdan 36&#x27;</blockquote>" in message
+    assert message.index("Nizar Al-Rashdan") < message.index("Probabilidade de vitória")
+
+
 def test_kickoff_notifications_use_custom_emoji_and_win_probability_in_portuguese():
     app = _FakeApplication()
     preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
@@ -831,33 +854,42 @@ def test_full_time_notifications_use_second_half_end_format_in_portuguese():
         {
             "id": "goal-1",
             "scoringPlay": True,
+            "team": {"id": "449"},
+            "scoreAfter": "1:0",
             "clock": {"displayValue": "31'"},
             "athletesInvolved": [{"id": "player-1", "displayName": "Cody Gakpo"}],
         },
         {
             "id": "goal-2",
             "scoringPlay": True,
+            "team": {"id": "449"},
+            "scoreAfter": "2:0",
             "clock": {"displayValue": "45'+2'"},
             "athletesInvolved": [{"id": "player-1", "displayName": "Cody Gakpo"}],
         },
         {
             "id": "goal-3",
             "scoringPlay": True,
+            "team": {"id": "627"},
             "ownGoal": True,
+            "scoreAfter": "3:0",
             "clock": {"displayValue": "60'"},
             "athletesInvolved": [{"id": "player-2", "displayName": "Ko Itakura"}],
         },
     ]
+    event["competitions"][0]["competitors"][0]["score"] = "3"
+    event["competitions"][0]["competitors"][1]["score"] = "0"
 
     asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
 
     html = app.bot.rich_messages[0]["rich_message"]["html"]
     assert "<b>⏰ Final do Segundo Tempo</b>" in html
-    assert "⚽️ 🇳🇱 Países Baixos 0 x 0 🇯🇵 Japão" in html
+    assert "⚽️ 🇳🇱 Países Baixos 3 x 0 🇯🇵 Japão" in html
     assert "🕒 14/06 17:00" in html
     assert "🏟 Estádio: AT&amp;T Stadium" in html
-    assert "⚽️ Cody Gakpo 31&#x27;, ⚽️ 45&#x27;+2&#x27;" in html
-    assert "⚽️ Ko Itakura 60&#x27; (GC)" in html
+    assert "<blockquote>⚽️ 🇳🇱 Cody Gakpo 31&#x27;<br/>" in html
+    assert "⚽️ 🇳🇱 Cody Gakpo 45&#x27;+2&#x27;<br/>" in html
+    assert "⚽️ 🇳🇱 Ko Itakura 60&#x27; (GC)</blockquote>" in html
     assert "Probabilidade de vitória" not in html
 
 
