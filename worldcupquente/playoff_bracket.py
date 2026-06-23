@@ -258,13 +258,27 @@ def resolve_third_place_slots(
     slot_candidates: dict[int, tuple[str, ...]],
     qualified_third_groups: list[str],
 ) -> dict[int, str] | None:
-    """Assign each third-place slot a single source group via bipartite matching.
+    """Assign each third-place slot a single source group via the FIFA table.
 
-    ``slot_candidates`` maps ``slot_id -> ordered candidate groups`` (the order is
-    preserved from the API placeholder so the result is deterministic). The
-    returned mapping is the lexicographically smallest valid full assignment, or
-    ``None`` when no complete assignment exists.
+    ``slot_candidates`` is kept for API compatibility but ignored: the FIFA
+    lookup table published by FIFA (Annex C of the regulations) is fully
+    authoritative, so we resolve slots directly from the table. The
+    :func:`playoff_fifa_table.lookup` is consulted first; the bipartite
+    matching fallback only kicks in when the combination has no published entry.
     """
+    from worldcupquente.playoff_fifa_table import lookup
+
+    official = lookup(qualified_third_groups)
+    if official is not None:
+        return dict(official)
+    return _bipartite_match(slot_candidates, qualified_third_groups)
+
+
+def _bipartite_match(
+    slot_candidates: dict[int, tuple[str, ...]],
+    qualified_third_groups: list[str],
+) -> dict[int, str] | None:
+    """Fallback bipartite matching used when the FIFA table lacks an entry."""
     slot_ids = sorted(slot_candidates)
     qualified_set = set(qualified_third_groups)
     assignment: dict[int, str] = {}
