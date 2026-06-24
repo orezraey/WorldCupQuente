@@ -16,9 +16,12 @@ valid assignment, which stays deterministic across runs.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 GROUP_LETTERS: tuple[str, ...] = tuple("ABCDEFGHIJKL")
 THIRD_PLACE_SLOT_COUNT = 8
@@ -260,18 +263,49 @@ def resolve_third_place_slots(
 ) -> dict[int, str] | None:
     """Assign each third-place slot a single source group via the FIFA table.
 
-    ``slot_candidates`` is kept for API compatibility but ignored: the FIFA
-    lookup table published by FIFA (Annex C of the regulations) is fully
-    authoritative, so we resolve slots directly from the table. The
-    :func:`playoff_fifa_table.lookup` is consulted first; the bipartite
-    matching fallback only kicks in when the combination has no published entry.
+    ``slot_candidates`` maps each round-of-32 third-place slot (keyed by its
+    SofaScore block ``order``) to the ordered candidate groups exposed by the
+    API placeholder (e.g. ``3A/3B/3C/3D/3F``). The FIFA lookup table published by
+    FIFA (Annex C of the regulations) is authoritative, so it is consulted
+    first. The returned assignment is validated against ``slot_candidates``: if
+    a group lands in a slot whose candidate list does not contain it (a sign the
+    table and the live bracket template disagree), we log a warning and fall
+    back to :func:`_bipartite_match`, which respects the candidates and stays
+    deterministic. When no candidate context is available the assignment is
+    trusted as-is.
     """
     from worldcupquente.playoff_fifa_table import lookup
 
     official = lookup(qualified_third_groups)
     if official is not None:
-        return dict(official)
+        if _assignment_respects_candidates(official, slot_candidates):
+            return dict(official)
+        logger.warning(
+            "FIFA table assignment %s inconsistent with API slot candidates %s "
+            "for qualified thirds %s; falling back to bipartite matching",
+            official,
+            slot_candidates,
+            qualified_third_groups,
+        )
     return _bipartite_match(slot_candidates, qualified_third_groups)
+
+
+def _assignment_respects_candidates(
+    assignment: dict[int, str],
+    slot_candidates: dict[int, tuple[str, ...]],
+) -> bool:
+    """Return True when every assigned group is a valid candidate for its slot.
+
+    When ``slot_candidates`` is empty there is no bracket context to validate
+    against, so the assignment is trusted.
+    """
+    if not slot_candidates:
+        return True
+    for slot, group in assignment.items():
+        candidates = slot_candidates.get(slot)
+        if candidates is not None and group not in candidates:
+            return False
+    return True
 
 
 def _bipartite_match(

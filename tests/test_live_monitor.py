@@ -302,6 +302,39 @@ def test_collect_live_notifications_deduplicates_official_disallowed_after_score
     assert second_notifications == []
 
 
+def test_collect_live_notifications_deduplicates_sofascore_disallowed_goal_with_fluctuating_minute():
+    """A single disallowed goal should not be duplicated when the API reports
+    slightly different minutes across polls (e.g. 8', 9', 6')."""
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+    disallowed = _disallowed_goal_detail()
+    event = _event_with_score(score=(0, 0), details=[])
+    event["sofascoreIncidents"] = {"goals": [], "disallowedGoals": [disallowed], "redCards": []}
+
+    # First poll – minute 8'
+    first_notifications, _ = _collect_live_notifications([event], state)
+    assert [n[0] for n in first_notifications] == [DISALLOWED_GOAL_NOTIFICATION]
+
+    # Second poll – same goal, but API now says minute 9'
+    disallowed["clock"] = {"value": 9, "displayValue": "9'"}
+    second_notifications, _ = _collect_live_notifications([event], state)
+    assert second_notifications == []
+
+    # Third poll – same goal again, but API now says minute 6'
+    disallowed["clock"] = {"value": 6, "displayValue": "6'"}
+    third_notifications, _ = _collect_live_notifications([event], state)
+    assert third_notifications == []
+
+
 def test_collect_live_notifications_uses_sofascore_penalty():
     state = LiveMonitorState(
         seen_goal_ids=set(),

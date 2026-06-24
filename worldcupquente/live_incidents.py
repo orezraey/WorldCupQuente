@@ -246,6 +246,15 @@ def _disallowed_goal_tracking_ids(event: dict[str, Any], detail: dict[str, Any])
         ids.add(f"disallowed-goal-minute:{event_id}:{team_id}:{minute}")
         if scorer:
             ids.add(f"disallowed-goal-minute:{event_id}:{team_id}:{minute}:{scorer}")
+        # Fuzzy minute matching: if the minute is within a small window,
+        # consider it the same event to avoid duplicate notifications
+        # caused by API minute fluctuations (e.g., 8' vs 9').
+        try:
+            numeric_minute = int(minute)
+            for offset in (-1, 1):
+                ids.add(f"disallowed-goal-minute:{event_id}:{team_id}:{numeric_minute + offset}")
+        except (TypeError, ValueError):
+            pass
     score_before = detail.get("scoreBefore")
     score_after = detail.get("scoreAfter")
     if event_id and team_id and score_before and score_after:

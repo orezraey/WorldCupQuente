@@ -448,6 +448,64 @@ def test_build_projection_empty_cup_tree_returns_empty_projection():
     assert projection.round_of_32 is None
 
 
+def test_fifa_table_every_entry_respects_official_candidates():
+    """Every FIFA table assignment must place a group that is an official
+    candidate for its slot (keyed by SofaScore block ``order``).
+
+    This is the regression guard for the slot-key misalignment between the FIFA
+    table column order and the SofaScore API block order. Before the fix, 65% of
+    assignments placed a group outside the slot's candidate list.
+    """
+    from worldcupquente.playoff_fifa_table import lookup, table_size
+    from worldcupquente.playoff_fifa_table_data import entries
+
+    official_candidates = {
+        1: frozenset("ABCDF"),   # M74: 1E vs 3rd A/B/C/D/F
+        2: frozenset("CDFGH"),   # M77: 1I vs 3rd C/D/F/G/H
+        7: frozenset("BEFIJ"),   # M81: 1D vs 3rd B/E/F/I/J
+        8: frozenset("AEHIJ"),   # M82: 1G vs 3rd A/E/H/I/J
+        11: frozenset("CEFHI"),  # M79: 1A vs 3rd C/E/F/H/I
+        12: frozenset("EHIJK"),  # M80: 1L vs 3rd E/H/I/J/K
+        15: frozenset("EFGIJ"),  # M85: 1B vs 3rd E/F/G/I/J
+        16: frozenset("DEIJL"),  # M87: 1K vs 3rd D/E/I/J/L
+    }
+
+    assert table_size() == 495
+    assert len(entries) == 495
+
+    checked = 0
+    for qualified, _ in entries:
+        assignment = lookup(list(qualified))
+        assert assignment is not None
+        assert set(assignment.values()) == set(qualified)
+        assert set(assignment.keys()) == set(official_candidates)
+        for slot, group in assignment.items():
+            assert group in official_candidates[slot], (
+                f"slot {slot} -> {group} not in {set(official_candidates[slot])} "
+                f"for qualified {qualified}"
+            )
+            checked += 1
+    assert checked == 495 * 8
+
+
+def test_resolve_third_place_slots_falls_back_when_table_violates_candidates():
+    """When the FIFA table returns an assignment that breaks a slot's candidate
+    list, resolve_third_place_slots must fall back to bipartite matching."""
+    from unittest.mock import patch
+
+    slot_candidates = {
+        1: ("A", "B", "C", "D", "F"),
+        8: ("A", "E", "H", "I", "J"),
+    }
+    # Slot 1 only accepts A/B/C/D/F, but the table claims slot 1 -> "E".
+    invalid_official = {1: "E", 8: "A"}
+
+    with patch("worldcupquente.playoff_fifa_table.lookup", return_value=invalid_official):
+        assignment = resolve_third_place_slots(slot_candidates, ["A", "E"])
+
+    assert assignment == {1: "A", 8: "E"}
+
+
 def _standings_fixture() -> list[dict]:
     return [
         {
