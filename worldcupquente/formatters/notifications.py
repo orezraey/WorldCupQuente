@@ -351,8 +351,6 @@ def _goal_benefited_side(
             return side
 
     team_side = _goal_team_side(goal, home, away)
-    if is_own_goal_play(goal) and team_side:
-        return "away" if team_side == "home" else "home"
     return team_side
 
 

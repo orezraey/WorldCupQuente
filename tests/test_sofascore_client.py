@@ -113,13 +113,6 @@ def test_get_tournament_standings_returns_standings_list():
     assert client.paths == ["/unique-tournament/16/season/58210/standings/total"]
 
 
-def test_get_scheduled_events_returns_events_list():
-    client = _FakeSofaScoreClient({"/sport/football/scheduled-events/2026-06-17": {"events": [{"id": 1}]}})
-
-    assert asyncio.run(client.get_scheduled_events("2026-06-17")) == [{"id": 1}]
-    assert client.paths == ["/sport/football/scheduled-events/2026-06-17"]
-
-
 def test_get_event_returns_inner_event_payload():
     client = _FakeSofaScoreClient({"/event/1": {"event": {"id": 1}}})
 

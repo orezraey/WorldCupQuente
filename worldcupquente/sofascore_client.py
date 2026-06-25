@@ -55,13 +55,6 @@ class SofaScoreClient:
 
         raise RuntimeError(f"SofaScore request failed: {url}") from last_error
 
-    async def get_scheduled_events(self, date: str) -> list[dict[str, Any]]:
-        try:
-            data = await self.get_json(f"/sport/football/scheduled-events/{date}")
-            return data.get("events", [])
-        except RuntimeError:
-            return []
-
     async def get_world_cup_teams(self, unique_tournament_id: int | str, season_id: int | str) -> list[dict[str, Any]]:
         try:
             data = await self.get_json(f"/unique-tournament/{unique_tournament_id}/season/{season_id}/teams")
@@ -175,7 +168,7 @@ class SofaScoreClient:
 
     async def get_match_incidents(self, event_id: int | str) -> list[dict[str, Any]]:
         try:
-            data = await self.get_json(f"/event/{event_id}/incidents")
+            data = await self.get_json(f"/event/{event_id}/incidents", quiet_statuses=(404,))
         except RuntimeError:
             return []
         incidents = data.get("incidents", [])

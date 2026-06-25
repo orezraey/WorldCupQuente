@@ -10,32 +10,32 @@ from worldcupquente.config import Settings
 from worldcupquente.services import WorldCupService
 
 
-def test_sofascore_today_games_filters_world_cup_events():
+def test_sofascore_today_games_returns_only_todays_events():
     service = _service()
+    today = service.sofascore_date_param_for_offset()
+    today_timestamp = _date_timestamp(today)
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={
-            service.sofascore_date_param_for_offset(): [
-                _raw_event(1, timestamp=_date_timestamp(service.sofascore_date_param_for_offset()), tournament_id=16, season_id=58210),
-                _raw_event(2, timestamp=_date_timestamp(service.sofascore_date_param_for_offset()), tournament_id=99, season_id=58210),
-            ]
+        tournament_events={
+            "last": [_raw_event(1, timestamp=today_timestamp - 86400, tournament_id=16, season_id=58210)],
+            "next": [
+                _raw_event(2, timestamp=today_timestamp, tournament_id=16, season_id=58210),
+                _raw_event(3, timestamp=today_timestamp + 86400, tournament_id=16, season_id=58210),
+            ],
         }
     )
     service.sofascore_client = fake_client  # type: ignore[assignment]
 
     scoreboard = asyncio.run(service.get_sofascore_today_games())
 
-    assert [event["id"] for event in scoreboard["events"]] == ["1"]
-    assert fake_client.scheduled_calls == [service.sofascore_date_param_for_offset()]
+    assert [event["id"] for event in scoreboard["events"]] == ["2"]
 
 
 def test_sofascore_games_by_date_filters_returned_events_by_local_date():
     service = _service()
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={
-            "2026-06-18": [
-                _raw_event(1, timestamp=1781715600),
-                _raw_event(2, timestamp=1781784000),
-            ]
+        tournament_events={
+            "last": [_raw_event(1, timestamp=1781715600)],
+            "next": [_raw_event(2, timestamp=1781784000)],
         }
     )
     service.sofascore_client = fake_client  # type: ignore[assignment]
@@ -48,7 +48,7 @@ def test_sofascore_games_by_date_filters_returned_events_by_local_date():
 def test_sofascore_games_by_date_hydrates_missing_venue_from_event_detail():
     service = _service()
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={"2026-06-18": [_raw_event(10, timestamp=_date_timestamp("2026-06-18"))]},
+        tournament_events={"next": [_raw_event(10, timestamp=_date_timestamp("2026-06-18"))]},
         event_details={10: {"venue": {"name": "Mercedes-Benz Stadium", "stadium": {"name": "Mercedes-Benz Stadium"}}}},
     )
     service.sofascore_client = fake_client  # type: ignore[assignment]
@@ -64,13 +64,12 @@ def test_sofascore_live_events_filter_and_enrich_live_matches():
     service = _service()
     today = service.sofascore_date_param_for_offset()
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={
-            service.sofascore_date_param_for_offset(-1): [],
-            today: [
+        tournament_events={
+            "last": [],
+            "next": [
                 _raw_event(10, timestamp=_date_timestamp(today), status_type="inprogress", description="2nd half"),
                 _raw_event(11, timestamp=_date_timestamp(today), status_type="notstarted", description="Not started"),
             ],
-            service.sofascore_date_param_for_offset(1): [],
         },
         incidents={10: [_goal_incident()]},
         statistics={10: _statistics_response()},
@@ -102,13 +101,12 @@ def test_sofascore_monitor_events_return_status_and_enriched_live_events():
     service = _service()
     today = service.sofascore_date_param_for_offset()
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={
-            service.sofascore_date_param_for_offset(-1): [],
-            today: [
+        tournament_events={
+            "last": [],
+            "next": [
                 _raw_event(20, timestamp=_date_timestamp(today), status_type="inprogress", description="1st half"),
                 _raw_event(21, timestamp=_date_timestamp(today), status_type="notstarted", description="Not started"),
             ],
-            service.sofascore_date_param_for_offset(1): [],
         },
         incidents={20: [_goal_incident()]},
     )
@@ -126,10 +124,9 @@ def test_sofascore_monitor_events_ignore_stale_incident_cache_when_cache_disable
     today = service.sofascore_date_param_for_offset()
     service.cache.set("sofascore:incidents:20", [], 60)
     fake_client = _FakeSofaScoreLiveClient(
-        scheduled_events={
-            service.sofascore_date_param_for_offset(-1): [],
-            today: [_raw_event(20, timestamp=_date_timestamp(today), status_type="inprogress", description="1st half")],
-            service.sofascore_date_param_for_offset(1): [],
+        tournament_events={
+            "last": [],
+            "next": [_raw_event(20, timestamp=_date_timestamp(today), status_type="inprogress", description="1st half")],
         },
         incidents={20: [_goal_incident()]},
     )
@@ -182,7 +179,7 @@ class _FakeSofaScoreLiveClient:
     def __init__(
         self,
         *,
-        scheduled_events: dict[str, list[dict[str, Any]]] | None = None,
+        tournament_events: dict[str, list[dict[str, Any]]] | None = None,
         incidents: dict[int, list[dict[str, Any]]] | None = None,
         statistics: dict[int, list[dict[str, Any]]] | None = None,
         probabilities: dict[int, dict[str, int]] | None = None,
@@ -190,14 +187,13 @@ class _FakeSofaScoreLiveClient:
         world_cup_teams: list[dict[str, Any]] | None = None,
         event_details: dict[int, dict[str, Any]] | None = None,
     ) -> None:
-        self.scheduled_events = scheduled_events or {}
+        self.tournament_events = tournament_events or {}
         self.incidents = incidents or {}
         self.statistics = statistics or {}
         self.probabilities = probabilities or {}
         self.lineups = lineups or {}
         self._world_cup_teams = world_cup_teams or []
         self.event_details = event_details or {}
-        self.scheduled_calls: list[str] = []
         self.incident_calls: list[str] = []
         self.lineup_calls: list[str] = []
         self.event_detail_calls: list[str] = []
@@ -205,9 +201,16 @@ class _FakeSofaScoreLiveClient:
     async def get_world_cup_teams(self, _tournament_id: int | str, _season_id: int | str) -> list[dict[str, Any]]:
         return self._world_cup_teams
 
-    async def get_scheduled_events(self, date: str) -> list[dict[str, Any]]:
-        self.scheduled_calls.append(date)
-        return self.scheduled_events.get(date, [])
+    async def get_tournament_events(
+        self,
+        _tournament_id: int | str,
+        _season_id: int | str,
+        direction: str,
+        _page: int = 0,
+        suppress_errors: bool = True,
+    ) -> dict[str, Any]:
+        del suppress_errors
+        return {"events": list(self.tournament_events.get(direction, [])), "hasNextPage": False}
 
     async def get_event(self, event_id: int | str, suppress_errors: bool = True) -> dict[str, Any]:
         del suppress_errors

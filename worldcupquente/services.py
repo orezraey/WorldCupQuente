@@ -25,7 +25,6 @@ SOFASCORE_WORLD_CUP_TOURNAMENT_ID = 16
 SOFASCORE_WORLD_CUP_SEASON_ID = 58210
 
 TEAMS_CACHE_SECONDS = 60 * 60 * 24
-SOFASCORE_EVENTS_CACHE_SECONDS = 60 * 5
 SOFASCORE_INCIDENTS_CACHE_SECONDS = 15
 SOFASCORE_LINEUPS_CACHE_SECONDS = 60 * 5
 SOFASCORE_STATISTICS_CACHE_SECONDS = 60 * 5
@@ -64,26 +63,9 @@ class WorldCupService:
         return (datetime.now(tz=self.bot_timezone) + timedelta(days=days)).strftime("%Y-%m-%d")
 
     async def get_sofascore_games_by_date(self, date_param: str, use_cache: bool = True) -> list[dict[str, Any]]:
-        cache_key = f"sofascore:scheduled-events:{date_param}"
-        cached = self.cache.get(cache_key) if use_cache else None
-        if cached is not None:
-            return cached
-
-        events = await self.sofascore_client.get_scheduled_events(date_param)
         requested_date = date_param.replace("-", "")
-        normalized = []
-        for raw_event in events:
-            if not _is_sofascore_world_cup_event(raw_event):
-                continue
-            event = _normalize_sofascore_event(raw_event)
-            if _event_local_date_param(event, self.bot_timezone) != requested_date:
-                continue
-            normalized.append(event)
-        normalized = sorted(normalized, key=_event_date_value)
-        normalized = await self._hydrate_sofascore_event_venues(normalized, use_cache=use_cache)
-        if use_cache:
-            self.cache.set(cache_key, normalized, SOFASCORE_EVENTS_CACHE_SECONDS)
-        return normalized
+        events = await self.get_sofascore_schedule_events(use_cache=use_cache)
+        return [event for event in events if _event_local_date_param(event, self.bot_timezone) == requested_date]
 
     async def get_sofascore_today_games(self, use_cache: bool = True) -> dict[str, Any]:
         events = await self.get_sofascore_games_by_date(self.sofascore_date_param_for_offset(), use_cache=use_cache)
@@ -120,20 +102,8 @@ class WorldCupService:
         *,
         use_cache: bool = True,
     ) -> list[dict[str, Any]]:
-        events_by_date = await asyncio.gather(
-            *(self.get_sofascore_games_by_date(self.sofascore_date_param_for_offset(offset), use_cache=use_cache) for offset in offsets)
-        )
-        events: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for day_events in events_by_date:
-            for event in day_events:
-                event_id = str(event.get("id") or "")
-                if event_id and event_id in seen_ids:
-                    continue
-                if event_id:
-                    seen_ids.add(event_id)
-                events.append(event)
-        return events
+        del offsets
+        return await self.get_sofascore_schedule_events(use_cache=use_cache)
 
     async def enrich_sofascore_live_events(
         self,
@@ -443,9 +413,9 @@ class WorldCupService:
             page += 1
         return events
 
-    async def get_sofascore_schedule_events(self) -> list[dict[str, Any]]:
+    async def get_sofascore_schedule_events(self, *, use_cache: bool = True) -> list[dict[str, Any]]:
         cache_key = f"sofascore:schedule:{SOFASCORE_WORLD_CUP_TOURNAMENT_ID}:{SOFASCORE_WORLD_CUP_SEASON_ID}"
-        cached = self.cache.get(cache_key)
+        cached = self.cache.get(cache_key) if use_cache else None
         if cached is not None:
             return cached
 
@@ -465,7 +435,9 @@ class WorldCupService:
             events.append(event)
 
         events = sorted(events, key=_event_date_value)
-        self.cache.set(cache_key, events, SOFASCORE_SCHEDULE_CACHE_SECONDS)
+        events = await self._hydrate_sofascore_event_venues(events, use_cache=use_cache)
+        if use_cache:
+            self.cache.set(cache_key, events, SOFASCORE_SCHEDULE_CACHE_SECONDS)
         return events
 
     async def get_sofascore_schedule_events_by_date(self, date_param: str) -> list[dict[str, Any]]:
@@ -670,17 +642,6 @@ def _sofascore_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _is_sofascore_world_cup_event(event: dict[str, Any]) -> bool:
-    tournament = event.get("tournament") or {}
-    unique_tournament = tournament.get("uniqueTournament") or {}
-    season = event.get("season") or {}
-    tournament_ids = {str(tournament.get("id") or ""), str(unique_tournament.get("id") or "")}
-    season_id = str(season.get("id") or "")
-    if str(SOFASCORE_WORLD_CUP_TOURNAMENT_ID) not in tournament_ids:
-        return False
-    return not season_id or season_id == str(SOFASCORE_WORLD_CUP_SEASON_ID)
 
 
 def _apply_sofascore_live_statistics(event: dict[str, Any], statistics: list[dict[str, Any]]) -> None:
