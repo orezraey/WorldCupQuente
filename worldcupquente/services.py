@@ -348,9 +348,11 @@ class WorldCupService:
                 SOFASCORE_WORLD_CUP_SEASON_ID,
                 "last",
                 page,
-                suppress_errors=False,
+                suppress_errors=page > 0,
             )
             page_events = data.get("events") or []
+            if not page_events:
+                break
             events.extend(_normalize_sofascore_event(event) for event in page_events if _is_sofascore_finished_event(event))
             if not data.get("hasNextPage") or page >= 10:
                 break
@@ -405,9 +407,12 @@ class WorldCupService:
                 SOFASCORE_WORLD_CUP_SEASON_ID,
                 direction,
                 page,
-                suppress_errors=False,
+                suppress_errors=page > 0,
             )
-            events.extend(data.get("events") or [])
+            page_events = data.get("events") or []
+            if not page_events:
+                break
+            events.extend(page_events)
             if not data.get("hasNextPage") or page >= 10:
                 break
             page += 1

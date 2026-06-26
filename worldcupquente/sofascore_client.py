@@ -93,7 +93,8 @@ class SofaScoreClient:
             return {"events": [], "hasNextPage": False}
         try:
             data = await self.get_json(
-                f"/unique-tournament/{unique_tournament_id}/season/{season_id}/events/{direction}/{page}"
+                f"/unique-tournament/{unique_tournament_id}/season/{season_id}/events/{direction}/{page}",
+                quiet_statuses=(404,),
             )
         except RuntimeError:
             if not suppress_errors:
