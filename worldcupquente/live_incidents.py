@@ -71,6 +71,8 @@ def _collect_live_notifications(
                 _remember_goal(seen_goal_ids, event, detail)
                 if is_bootstrapped:
                     notifications.append((GOAL_NOTIFICATION, event, detail))
+        if score_regressed:
+            _evict_reverted_goal_score_keys(seen_goal_ids, event, previous_score, current_score)
         if score_regressed and not disallowed_goals:
             previously_seen_goal_ids = set(seen_goal_ids)
             for detail in _score_regression_disallowed_goal_details(event, previous_score, current_score):
@@ -148,6 +150,32 @@ def _remember_goal(
     detail: dict[str, Any],
 ) -> None:
     seen_goal_ids.update(_goal_tracking_ids(event, detail))
+
+
+def _evict_reverted_goal_score_keys(
+    seen_goal_ids: set[str],
+    event: dict[str, Any],
+    previous_score: tuple[int, ...],
+    current_score: tuple[int, ...],
+) -> None:
+    event_id = str(event.get("id", ""))
+    if not event_id:
+        return
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors", [])
+    for index, current in enumerate(current_score):
+        previous = previous_score[index] if index < len(previous_score) else 0
+        if previous <= current:
+            continue
+        team = (competitors[index].get("team") or {}) if index < len(competitors) else {}
+        team_id = str(team.get("id", ""))
+        for reverted_score in range(current + 1, previous + 1):
+            score_after = list(previous_score)
+            score_after[index] = reverted_score
+            score_key = ":".join(str(score) for score in score_after)
+            seen_goal_ids.discard(f"goal-score:{event_id}:{score_key}")
+            if team_id:
+                seen_goal_ids.discard(f"goal-score:{event_id}:{team_id}:{score_key}")
 
 
 def _goal_tracking_ids(event: dict[str, Any], detail: dict[str, Any]) -> set[str]:

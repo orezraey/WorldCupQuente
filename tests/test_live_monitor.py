@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from telegram.error import Forbidden
+
 import worldcupquente.live_monitor as live_monitor
 from worldcupquente.live_monitor import (
     DISALLOWED_GOAL_NOTIFICATION,
@@ -23,6 +25,7 @@ from worldcupquente.live_monitor import (
     _send_incident_notifications,
     _send_pending_full_time_standings,
     _send_pending_player_ratings,
+    _send_pre_game_notifications,
     _send_status_notifications,
     poll_live_notifications,
 )
@@ -302,6 +305,95 @@ def test_collect_live_notifications_deduplicates_official_disallowed_after_score
     assert second_notifications == []
 
 
+def test_collect_live_notifications_redetects_goal_after_disallowed_score_revert():
+    """A real goal reaching the same score as a previously disallowed goal must
+    still be notified. The disallowed goal must not poison the score-based
+    deduplication keys."""
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+
+    def event_with_clock(score: tuple[int, int], display_clock: str) -> dict[str, Any]:
+        event = _event_with_score(score=score, details=[])
+        event["competitions"][0]["status"] = {"displayClock": display_clock}
+        return event
+
+    first, _ = _collect_live_notifications([event_with_clock((0, 1), "1'")], state)
+    reverted, _ = _collect_live_notifications([event_with_clock((0, 0), "2'")], state)
+    second, _ = _collect_live_notifications([event_with_clock((0, 1), "9'")], state)
+
+    assert [notification[0] for notification in first] == [GOAL_NOTIFICATION]
+    assert [notification[0] for notification in reverted] == [DISALLOWED_GOAL_NOTIFICATION]
+    assert [notification[0] for notification in second] == [GOAL_NOTIFICATION]
+
+
+def test_collect_live_notifications_redetects_goal_after_multi_goal_score_revert():
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 0)},
+        is_bootstrapped=True,
+    )
+
+    def event_with_clock(score: tuple[int, int], display_clock: str) -> dict[str, Any]:
+        event = _event_with_score(score=score, details=[])
+        event["competitions"][0]["status"] = {"displayClock": display_clock}
+        return event
+
+    first, _ = _collect_live_notifications([event_with_clock((1, 0), "1'")], state)
+    second, _ = _collect_live_notifications([event_with_clock((2, 0), "2'")], state)
+    reverted, _ = _collect_live_notifications([event_with_clock((0, 0), "3'")], state)
+    third, _ = _collect_live_notifications([event_with_clock((1, 0), "9'")], state)
+
+    assert [notification[0] for notification in first] == [GOAL_NOTIFICATION]
+    assert [notification[0] for notification in second] == [GOAL_NOTIFICATION]
+    assert [notification[0] for notification in reverted] == [
+        DISALLOWED_GOAL_NOTIFICATION,
+        DISALLOWED_GOAL_NOTIFICATION,
+    ]
+    assert [notification[0] for notification in third] == [GOAL_NOTIFICATION]
+
+
+def test_collect_live_notifications_redetects_sofascore_goal_after_disallowed_score_revert():
+    """A goal arriving via SofaScore incidents must be notified even when an
+    earlier disallowed goal reached the same score via the score-change path."""
+    state = LiveMonitorState(
+        seen_goal_ids=set(),
+        seen_penalty_ids=set(),
+        seen_red_card_ids=set(),
+        seen_pre_game_ids=set(),
+        seen_kickoff_ids=set(),
+        seen_halftime_ids=set(),
+        seen_full_time_ids=set(),
+        score_snapshots={"match-1": (0, 1)},
+        is_bootstrapped=True,
+    )
+
+    _collect_live_notifications([_event_with_score(score=(1, 1), details=[])], state)
+    _collect_live_notifications([_event_with_score(score=(0, 1), details=[])], state)
+
+    detail = _goal_detail()
+    detail["scoreAfter"] = "1:1"
+    event = _event_with_score(score=(1, 1), details=[])
+    event["sofascoreIncidents"] = {"goals": [detail], "redCards": []}
+
+    notifications, _ = _collect_live_notifications([event], state)
+
+    assert [notification[0] for notification in notifications] == [GOAL_NOTIFICATION]
+    assert notifications[0][2]["scoreAfter"] == "1:1"
 def test_collect_live_notifications_deduplicates_sofascore_disallowed_goal_with_fluctuating_minute():
     """A single disallowed goal should not be duplicated when the API reports
     slightly different minutes across polls (e.g. 8', 9', 6')."""
@@ -791,6 +883,28 @@ def test_send_incident_notifications_uses_goal_preference_for_disallowed_goal():
     assert "Player Two" in app.bot.messages[0]["text"]
 
 
+def test_send_incident_notifications_disables_blocked_chat():
+    detail = _goal_detail()
+    event = _event_with_score(score=(1, 0), details=[detail])
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    service = _FakeService()
+
+    asyncio.run(
+        _send_incident_notifications(
+            app,
+            [(GOAL_NOTIFICATION, event, detail)],
+            set(),
+            preferences,
+            service,
+        )
+    )
+
+    assert [message["chat_id"] for message in app.bot.messages] == [1]
+    assert preferences.is_blocked(2)
+
+
 def test_status_notifications_use_period_end_format_in_portuguese():
     app = _FakeApplication()
     preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
@@ -805,6 +919,48 @@ def test_status_notifications_use_period_end_format_in_portuguese():
         "🕒 14/06 17:00\n"
         "🏟 Estádio: AT&amp;T Stadium"
     )
+
+
+def test_status_notifications_disable_blocked_chat():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("in", "HT")
+
+    asyncio.run(_send_status_notifications(app, [(HALFTIME_NOTIFICATION, event)], preferences, service))
+
+    assert [message["chat_id"] for message in app.bot.messages] == [1]
+    assert preferences.is_blocked(2)
+
+
+def test_full_time_rich_forbidden_disables_chat_without_fallback_or_ratings_pending():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _full_time_event_with_records()
+    event["sofascorePlayerRatings"] = _player_ratings()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    assert [message["chat_id"] for message in app.bot.rich_messages] == [1]
+    assert app.bot.messages == []
+    assert preferences.is_blocked(2)
+    assert "live_pending_player_ratings" not in app.bot_data
+
+
+def test_pre_game_notifications_disable_blocked_chat():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    service = _FakeService()
+    event = _period_status_event("pre", "Pré")
+
+    asyncio.run(_send_pre_game_notifications(app, [event], preferences, service))
+
+    assert [message["chat_id"] for message in app.bot.messages] == [1]
+    assert preferences.is_blocked(2)
 
 
 def test_halftime_notification_shows_current_score():
@@ -1031,6 +1187,118 @@ def test_pending_player_ratings_falls_back_to_plain_message_when_rich_fails():
     assert app.bot_data["live_pending_player_ratings"] == {}
     assert app.bot.messages
     assert "Notas SofaScore" in app.bot.messages[0]["text"]
+
+
+def test_pending_player_ratings_blocked_chat_does_not_resend_to_others():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _period_status_event("post", "FT", completed=True)
+    finished_event = {**event, "sofascorePlayerRatings": _player_ratings()}
+    service = _FakeService(finished_event=finished_event)
+    app.bot_data["live_pending_player_ratings"] = {
+        "match-period": {"event": event, "pending_chat_ids": [1, 2]}
+    }
+
+    asyncio.run(_send_pending_player_ratings(app, preferences, service))
+    asyncio.run(_send_pending_player_ratings(app, preferences, service))
+
+    ratings_messages = [m for m in app.bot.rich_messages if m["chat_id"] == 1]
+    assert len(ratings_messages) == 1
+    assert preferences.is_blocked(2)
+    assert app.bot_data["live_pending_player_ratings"] == {}
+
+
+def test_pending_player_ratings_disabled_chat_skipped_without_resend():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _period_status_event("post", "FT", completed=True)
+    finished_event = {**event, "sofascorePlayerRatings": _player_ratings()}
+    service = _FakeService(finished_event=finished_event)
+    preferences.disable_chat(2)
+    app.bot_data["live_pending_player_ratings"] = {
+        "match-period": {"event": event, "pending_chat_ids": [1, 2]}
+    }
+
+    asyncio.run(_send_pending_player_ratings(app, preferences, service))
+
+    assert [m["chat_id"] for m in app.bot.rich_messages] == [1]
+    assert app.bot_data["live_pending_player_ratings"] == {}
+
+
+def test_pending_player_ratings_transient_failure_keeps_chat_for_retry():
+    app = _FakeApplication()
+    app.bot.transient_fail_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _period_status_event("post", "FT", completed=True)
+    finished_event = {**event, "sofascorePlayerRatings": _player_ratings()}
+    service = _FakeService(finished_event=finished_event)
+    app.bot_data["live_pending_player_ratings"] = {
+        "match-period": {"event": event, "pending_chat_ids": [1, 2]}
+    }
+
+    asyncio.run(_send_pending_player_ratings(app, preferences, service))
+
+    assert [m["chat_id"] for m in app.bot.rich_messages] == [1]
+    pending = app.bot_data["live_pending_player_ratings"]
+    assert pending["match-period"]["pending_chat_ids"] == [2]
+
+
+def test_full_time_without_ratings_enqueues_all_chats_for_player_ratings():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_with_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    pending = app.bot_data["live_pending_player_ratings"]
+    assert set(pending["match-1"]["pending_chat_ids"]) == {1, 2}
+
+
+def test_full_time_rich_success_excludes_delivered_chats_from_ratings_pending():
+    app = _FakeApplication()
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_with_records()
+    event["sofascorePlayerRatings"] = _player_ratings()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    assert "live_pending_player_ratings" not in app.bot_data
+
+
+def test_full_time_rich_failure_enqueues_only_failed_chat_for_ratings():
+    app = _FakeApplication()
+    app.bot.rich_fail_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _full_time_event_with_records()
+    event["sofascorePlayerRatings"] = _player_ratings()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    pending = app.bot_data["live_pending_player_ratings"]
+    assert pending["match-1"]["pending_chat_ids"] == [2]
+
+
+def test_pending_full_time_standings_blocked_chat_does_not_resend_to_others():
+    app = _FakeApplication()
+    app.bot.forbidden_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True})
+    event = _full_time_event_with_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+    service.groups = [_standings_group(usa_record=(1, 1, 0, 0), par_record=(1, 0, 0, 1))]
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+    asyncio.run(_send_pending_full_time_standings(app, preferences, service))
+
+    table_messages = [m for m in app.bot.rich_messages if "<table" in m["rich_message"]["html"]]
+    assert [m["chat_id"] for m in table_messages] == [1]
+    assert preferences.is_blocked(2)
+    assert app.bot_data[PENDING_FULL_TIME_STANDINGS_KEY] == {}
 
 
 def _event_with_score(
@@ -1303,6 +1571,7 @@ class _FakePreferences:
         self.goal_enabled = goal_enabled
         self.language = language
         self.enabled_notification_types: list[str] = []
+        self.blocked_chat_ids: set[int] = set()
 
     def has_recipients(self, _static_chat_ids: tuple[int, ...]) -> bool:
         return True
@@ -1315,13 +1584,19 @@ class _FakePreferences:
     ) -> list[int]:
         assert _notification_type != PRE_GAME_NOTIFICATION or team_ids is not None
         self.enabled_notification_types.append(_notification_type)
-        return list(static_chat_ids)
+        return [chat_id for chat_id in static_chat_ids if chat_id not in self.blocked_chat_ids]
 
     def get(self, chat_id: int) -> dict[str, bool]:
         return {GOAL_NOTIFICATION: self.goal_enabled[chat_id]}
 
     def get_language(self, _chat_id: int) -> str:
         return self.language
+
+    def is_blocked(self, chat_id: int) -> bool:
+        return chat_id in self.blocked_chat_ids
+
+    def disable_chat(self, chat_id: int) -> None:
+        self.blocked_chat_ids.add(chat_id)
 
 
 class _FakeApplication:
@@ -1335,11 +1610,26 @@ class _FakeBot:
         self.messages: list[dict[str, Any]] = []
         self.rich_messages: list[dict[str, Any]] = []
         self.fail_rich_messages = False
+        self.rich_fail_chat_ids: set[int] = set()
+        self.forbidden_chat_ids: set[int] = set()
+        self.transient_fail_chat_ids: set[int] = set()
 
     async def send_message(self, **kwargs: Any) -> None:
+        chat_id = kwargs.get("chat_id")
+        if chat_id in self.forbidden_chat_ids:
+            raise Forbidden("Forbidden: bot was blocked by the user")
+        if chat_id in self.transient_fail_chat_ids:
+            raise RuntimeError("transient send failure")
         self.messages.append(kwargs)
 
     async def do_api_request(self, _method: str, api_kwargs: dict[str, Any]) -> None:
         if self.fail_rich_messages:
             raise RuntimeError("rich failed")
+        chat_id = api_kwargs.get("chat_id")
+        if chat_id in self.forbidden_chat_ids:
+            raise Forbidden("Forbidden: bot was blocked by the user")
+        if chat_id in self.rich_fail_chat_ids:
+            raise RuntimeError("rich failed")
+        if chat_id in self.transient_fail_chat_ids:
+            raise RuntimeError("transient rich failure")
         self.rich_messages.append(api_kwargs)

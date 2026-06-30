@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import Application
 
 from worldcupquente.formatters import (
@@ -49,6 +50,13 @@ logger = logging.getLogger(__name__)
 
 KICKOFF_NOTIFICATION = "kickoff"
 PENDING_PLAYER_RATINGS_KEY = "live_pending_player_ratings"
+PENDING_CHAT_IDS_KEY = "pending_chat_ids"
+
+
+def _is_permanent_telegram_error(exc: BaseException) -> bool:
+    if isinstance(exc, Forbidden):
+        return True
+    return isinstance(exc, BadRequest) and "chat not found" in str(exc).lower()
 
 
 async def _send_incident_notifications(
@@ -84,10 +92,13 @@ async def _send_incident_notifications(
                     text=notification_text,
                     parse_mode=ParseMode.HTML,
                 )
-            except Exception:
-                logger.exception(
+            except Exception as exc:
+                _handle_delivery_failure(
+                    exc,
+                    preferences,
+                    chat_id,
                     "Failed to send live notification",
-                    extra={"chat_id": chat_id, "notification_type": notification_type},
+                    {"notification_type": notification_type},
                 )
 
 
@@ -143,12 +154,19 @@ async def _send_status_notifications(
                                 },
                             },
                         )
-                    except Exception:
-                        logger.exception("Failed to send rich full-time notification")
+                    except Exception as exc:
+                        if not _handle_delivery_failure(
+                            exc,
+                            preferences,
+                            chat_id,
+                            "Failed to send rich full-time notification",
+                            {"notification_type": notification_type},
+                        ):
+                            continue
                         if event.get("sofascorePlayerRatings"):
-                            event_id = str(event.get("id", ""))
-                            if event_id:
-                                _pending_player_ratings(application)[event_id] = {"event": event}
+                            _enqueue_pending_player_ratings(
+                                application, str(event.get("id", "")), event, [chat_id]
+                            )
                         await application.bot.send_message(
                             chat_id=chat_id,
                             text=(
@@ -164,20 +182,22 @@ async def _send_status_notifications(
                     text=halftime_text,
                     parse_mode=ParseMode.HTML,
                 )
-            except Exception:
-                logger.exception(
+            except Exception as exc:
+                _handle_delivery_failure(
+                    exc,
+                    preferences,
+                    chat_id,
                     "Failed to send game status notification",
-                    extra={"chat_id": chat_id, "notification_type": notification_type},
+                    {"notification_type": notification_type},
                 )
         if notification_type == FULL_TIME_NOTIFICATION and chat_ids:
             event_id = str(event.get("id", ""))
             if event_id:
-                _pending_full_time_standings(application)[event_id] = pending_payload or {
-                    "event": event,
-                    "initial_records": {},
-                }
+                standings_entry = pending_payload or {"event": event, "initial_records": {}}
+                standings_entry[PENDING_CHAT_IDS_KEY] = list(chat_ids)
+                _pending_full_time_standings(application)[event_id] = standings_entry
                 if not event.get("sofascorePlayerRatings"):
-                    _pending_player_ratings(application)[event_id] = {"event": event}
+                    _enqueue_pending_player_ratings(application, event_id, event, chat_ids)
 
 
 async def _send_pending_full_time_standings(
@@ -189,11 +209,7 @@ async def _send_pending_full_time_standings(
     for event_id, pending_item in list(pending.items()):
         event = pending_item.get("event", {})
         initial_records = pending_item.get("initial_records", {})
-        chat_ids = preferences.enabled_chat_ids(
-            FULL_TIME_NOTIFICATION,
-            service.settings.live_notification_chat_ids,
-            _event_team_ids(event),
-        )
+        chat_ids = _resolve_pending_chat_ids(pending_item, preferences, service, event)
         if not chat_ids:
             pending.pop(event_id, None)
             _standings_snapshots(application).pop(event_id, None)
@@ -203,7 +219,7 @@ async def _send_pending_full_time_standings(
         if group is None:
             continue
 
-        failed = False
+        remaining: list[Any] = []
         for chat_id in chat_ids:
             language = preferences.get_language(chat_id)
             try:
@@ -217,10 +233,14 @@ async def _send_pending_full_time_standings(
                         },
                     },
                 )
-            except Exception:
-                failed = True
-                logger.exception("Failed to send updated full-time standings")
-        if not failed:
+            except Exception as exc:
+                if _handle_delivery_failure(
+                    exc, preferences, chat_id, "Failed to send updated full-time standings"
+                ):
+                    remaining.append(chat_id)
+        if remaining:
+            pending_item[PENDING_CHAT_IDS_KEY] = remaining
+        else:
             pending.pop(event_id, None)
             _standings_snapshots(application).pop(event_id, None)
 
@@ -233,11 +253,7 @@ async def _send_pending_player_ratings(
     pending = _pending_player_ratings(application)
     for event_id, pending_item in list(pending.items()):
         fallback_event = pending_item.get("event", {})
-        chat_ids = preferences.enabled_chat_ids(
-            FULL_TIME_NOTIFICATION,
-            service.settings.live_notification_chat_ids,
-            _event_team_ids(fallback_event),
-        )
+        chat_ids = _resolve_pending_chat_ids(pending_item, preferences, service, fallback_event)
         if not chat_ids:
             pending.pop(event_id, None)
             continue
@@ -250,15 +266,19 @@ async def _send_pending_player_ratings(
         if not event or not event.get("sofascorePlayerRatings"):
             continue
 
-        failed = False
+        remaining: list[Any] = []
         for chat_id in chat_ids:
             language = preferences.get_language(chat_id)
             try:
                 await _send_player_ratings_notification(application, chat_id, event, language)
-            except Exception:
-                failed = True
-                logger.exception("Failed to send pending player ratings")
-        if not failed:
+            except Exception as exc:
+                if _handle_delivery_failure(
+                    exc, preferences, chat_id, "Failed to send pending player ratings"
+                ):
+                    remaining.append(chat_id)
+        if remaining:
+            pending_item[PENDING_CHAT_IDS_KEY] = remaining
+        else:
             pending.pop(event_id, None)
 
 
@@ -282,7 +302,9 @@ async def _send_player_ratings_notification(
                 },
             )
             return
-        except Exception:
+        except Exception as exc:
+            if _is_permanent_telegram_error(exc):
+                raise
             logger.exception("Failed to send rich player ratings notification")
 
     await application.bot.send_message(
@@ -298,6 +320,64 @@ def _pending_full_time_standings(application: Application) -> dict[str, dict[str
 
 def _pending_player_ratings(application: Application) -> dict[str, dict[str, Any]]:
     return application.bot_data.setdefault(PENDING_PLAYER_RATINGS_KEY, {})
+
+
+def _enqueue_pending_player_ratings(
+    application: Application,
+    event_id: str,
+    event: dict[str, Any],
+    chat_ids: list[Any],
+) -> None:
+    if not event_id:
+        return
+    pending = _pending_player_ratings(application)
+    entry = pending.get(event_id)
+    if entry is None:
+        entry = {"event": event}
+        pending[event_id] = entry
+    else:
+        entry["event"] = event
+    stored = entry.setdefault(PENDING_CHAT_IDS_KEY, [])
+    for chat_id in chat_ids:
+        if chat_id not in stored:
+            stored.append(chat_id)
+
+
+def _resolve_pending_chat_ids(
+    pending_item: dict[str, Any],
+    preferences: NotificationPreferences,
+    service: WorldCupService,
+    event: dict[str, Any],
+) -> list[Any]:
+    enabled = preferences.enabled_chat_ids(
+        FULL_TIME_NOTIFICATION,
+        service.settings.live_notification_chat_ids,
+        _event_team_ids(event),
+    )
+    stored = pending_item.get(PENDING_CHAT_IDS_KEY)
+    if not stored:
+        return list(enabled)
+    enabled_set = set(enabled)
+    return [chat_id for chat_id in stored if chat_id in enabled_set]
+
+
+def _handle_delivery_failure(
+    exc: BaseException,
+    preferences: NotificationPreferences,
+    chat_id: Any,
+    error_label: str,
+    extra: dict[str, Any] | None = None,
+) -> bool:
+    log_extra = {"chat_id": chat_id, **(extra or {})}
+    if _is_permanent_telegram_error(exc):
+        preferences.disable_chat(chat_id)
+        logger.warning(
+            "Disabled notifications for unreachable chat",
+            extra=log_extra,
+        )
+        return False
+    logger.exception(error_label, extra=log_extra)
+    return True
 
 
 async def _send_pre_game_notifications(
@@ -321,10 +401,13 @@ async def _send_pre_game_notifications(
                     text=format_pre_game_notification(event, service.bot_timezone, language),
                     parse_mode=ParseMode.HTML,
                 )
-            except Exception:
-                logger.exception(
+            except Exception as exc:
+                _handle_delivery_failure(
+                    exc,
+                    preferences,
+                    chat_id,
                     "Failed to send pre-game notification",
-                    extra={"chat_id": chat_id, "notification_type": PRE_GAME_NOTIFICATION},
+                    {"notification_type": PRE_GAME_NOTIFICATION},
                 )
 
 

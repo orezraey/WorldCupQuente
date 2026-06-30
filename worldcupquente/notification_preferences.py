@@ -33,6 +33,7 @@ DEFAULT_NOTIFICATION_SETTINGS = dict.fromkeys(NOTIFICATION_TYPES, True)
 LANGUAGE_KEY = "language"
 TEAM_SCOPE_KEY = "team_scope"
 FOLLOWED_TEAM_IDS_KEY = "followed_team_ids"
+BLOCKED_KEY = "blocked"
 TEAM_SCOPE_ALL = "all"
 TEAM_SCOPE_FOLLOWED = "followed"
 TEAM_SCOPES = (TEAM_SCOPE_ALL, TEAM_SCOPE_FOLLOWED)
@@ -53,6 +54,8 @@ class NotificationPreferences:
         if key not in self._items:
             self._items[key] = self._default_settings()
             self.save()
+        elif self._items[key].pop(BLOCKED_KEY, None) is not None:
+            self.save()
         return self.get(chat_id)
 
     def get(self, chat_id: ChatId) -> dict[str, Any]:
@@ -62,6 +65,19 @@ class NotificationPreferences:
 
     def get_language(self, chat_id: ChatId) -> str:
         return normalize_language(str(self.get(chat_id).get(LANGUAGE_KEY, DEFAULT_LANGUAGE)))
+
+    def is_blocked(self, chat_id: ChatId) -> bool:
+        return bool(self.get(chat_id).get(BLOCKED_KEY, False))
+
+    def disable_chat(self, chat_id: ChatId) -> dict[str, Any]:
+        key = self._chat_key(chat_id)
+        if key not in self._items:
+            self._items[key] = self._default_settings()
+        current = self.get(chat_id)
+        current[BLOCKED_KEY] = True
+        self._items[key] = current
+        self.save()
+        return self.get(chat_id)
 
     def set_language(self, chat_id: ChatId, language: str) -> dict[str, Any]:
         key = self._chat_key(chat_id)
@@ -149,6 +165,7 @@ class NotificationPreferences:
             key = self._chat_key(chat_id)
             if (
                 key in seen
+                or self.is_blocked(chat_id)
                 or not self.get(chat_id).get(notification_type, True)
                 or not self._matches_team_scope(chat_id, team_ids)
             ):
@@ -221,6 +238,8 @@ class NotificationPreferences:
             )
         default_language = LEGACY_DEFAULT_LANGUAGE if has_notification_settings else DEFAULT_LANGUAGE
         validated[LANGUAGE_KEY] = normalize_language(str(settings.get(LANGUAGE_KEY, default_language)))
+        if settings.get(BLOCKED_KEY):
+            validated[BLOCKED_KEY] = True
         return validated
 
     @staticmethod
