@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram.error import Forbidden
+from telegram.error import Forbidden, TimedOut
 
 import worldcupquente.live_monitor as live_monitor
 from worldcupquente.live_monitor import (
@@ -950,6 +951,23 @@ def test_full_time_rich_forbidden_disables_chat_without_fallback_or_ratings_pend
     assert "live_pending_player_ratings" not in app.bot_data
 
 
+def test_full_time_rich_timeout_logs_warning_and_uses_fallback(caplog):
+    app = _FakeApplication()
+    app.bot.rich_timeout_chat_ids = {2}
+    preferences = _FakePreferences(goal_enabled={1: True, 2: True}, language="pt")
+    event = _full_time_event_with_records()
+    service = _FakeService(groups=[_standings_group(usa_record=(0, 0, 0, 0), par_record=(0, 0, 0, 0))])
+    caplog.set_level(logging.WARNING, logger="worldcupquente.live_delivery")
+
+    asyncio.run(_send_status_notifications(app, [(FULL_TIME_NOTIFICATION, event)], preferences, service))
+
+    assert [message["chat_id"] for message in app.bot.rich_messages] == [1]
+    assert [message["chat_id"] for message in app.bot.messages] == [2]
+    assert not preferences.is_blocked(2)
+    assert any("Failed to send rich full-time notification" in record.message for record in caplog.records)
+    assert all(record.levelno < logging.ERROR for record in caplog.records)
+
+
 def test_pre_game_notifications_disable_blocked_chat():
     app = _FakeApplication()
     app.bot.forbidden_chat_ids = {2}
@@ -1611,6 +1629,7 @@ class _FakeBot:
         self.rich_messages: list[dict[str, Any]] = []
         self.fail_rich_messages = False
         self.rich_fail_chat_ids: set[int] = set()
+        self.rich_timeout_chat_ids: set[int] = set()
         self.forbidden_chat_ids: set[int] = set()
         self.transient_fail_chat_ids: set[int] = set()
 
@@ -1630,6 +1649,8 @@ class _FakeBot:
             raise Forbidden("Forbidden: bot was blocked by the user")
         if chat_id in self.rich_fail_chat_ids:
             raise RuntimeError("rich failed")
+        if chat_id in self.rich_timeout_chat_ids:
+            raise TimedOut("Timed out")
         if chat_id in self.transient_fail_chat_ids:
             raise RuntimeError("transient rich failure")
         self.rich_messages.append(api_kwargs)

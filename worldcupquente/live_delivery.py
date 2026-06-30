@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, Forbidden
+from telegram.error import BadRequest, Forbidden, NetworkError, TimedOut
 from telegram.ext import Application
 
 from worldcupquente.formatters import (
@@ -57,6 +57,10 @@ def _is_permanent_telegram_error(exc: BaseException) -> bool:
     if isinstance(exc, Forbidden):
         return True
     return isinstance(exc, BadRequest) and "chat not found" in str(exc).lower()
+
+
+def _is_expected_transient_telegram_error(exc: BaseException) -> bool:
+    return isinstance(exc, TimedOut | NetworkError)
 
 
 async def _send_incident_notifications(
@@ -376,6 +380,9 @@ def _handle_delivery_failure(
             extra=log_extra,
         )
         return False
+    if _is_expected_transient_telegram_error(exc):
+        logger.warning("%s: %s", error_label, exc, extra=log_extra)
+        return True
     logger.exception(error_label, extra=log_extra)
     return True
 
