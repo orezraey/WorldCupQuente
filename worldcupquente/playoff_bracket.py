@@ -368,7 +368,13 @@ def _participant_seed(participant: dict[str, Any]) -> Seed:
     name = team.get("name") or ""
     if is_seed_placeholder(name):
         return parse_seed(name, participant.get("sourceBlockId"))
-    return ResolvedTeam(team)
+    return ResolvedTeam(_sofascore_team(team))
+
+
+def _sofascore_team(team: dict[str, Any]) -> dict[str, Any]:
+    if not team:
+        return {}
+    return {**team, "source": "sofascore"}
 
 
 def _winner_team_of_block(block: dict[str, Any]) -> dict[str, Any] | None:
@@ -376,14 +382,18 @@ def _winner_team_of_block(block: dict[str, Any]) -> dict[str, Any] | None:
         return None
     for participant in block.get("participants", []):
         if participant.get("winner"):
-            return participant.get("team") or {}
+            return _sofascore_team(participant.get("team") or {})
     return None
 
 
 def _loser_team_of_block(block: dict[str, Any]) -> dict[str, Any] | None:
     if not block.get("finished"):
         return None
-    losers = [participant.get("team") or {} for participant in block.get("participants", []) if not participant.get("winner")]
+    losers = [
+        _sofascore_team(participant.get("team") or {})
+        for participant in block.get("participants", [])
+        if not participant.get("winner")
+    ]
     return losers[0] if losers else None
 
 

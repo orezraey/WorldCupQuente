@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
+from worldcupquente.formatters.playoffs import format_playoff_bracket_plain
 from worldcupquente.playoff_bracket import (
     GroupFirst,
     GroupSecond,
@@ -440,6 +443,44 @@ def test_build_projection_propagates_winners_from_finished_blocks():
     match = round_of_16.matches[0]
     assert match.home.team["name"] == "Brazil"
     assert match.away.team is None
+
+
+def test_playoff_formatting_uses_sofascore_name_for_legacy_id_collision():
+    cup_tree = {
+        "rounds": [
+            {
+                "order": 1,
+                "description": "Round of 32",
+                "blocks": [
+                    {
+                        "order": 1,
+                        "finished": True,
+                        "blockId": 2218759,
+                        "participants": [
+                            {
+                                "team": {"id": "4711", "name": "Germany"},
+                                "winner": False,
+                            },
+                            {
+                                "team": {"id": "4789", "name": "Paraguay"},
+                                "winner": True,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    projection = build_projection(cup_tree, [])
+    output = format_playoff_bracket_plain(
+        projection,
+        ZoneInfo("America/Sao_Paulo"),
+        language="pt",
+    )
+
+    assert "Paraguai" in output
+    assert "Costa do Marfim" not in output
 
 
 def test_build_projection_empty_cup_tree_returns_empty_projection():
